@@ -3620,10 +3620,13 @@ struct bgp *bgp_lookup_by_name(const char *name)
 	struct bgp *bgp;
 	struct listnode *node, *nnode;
 
-	for (ALL_LIST_ELEMENTS(bm->bgp, node, nnode, bgp))
+	for (ALL_LIST_ELEMENTS(bm->bgp, node, nnode, bgp)) {
+		if (CHECK_FLAG(bgp->vrf_flags, BGP_VRF_AUTO))
+			continue;
 		if ((bgp->name == NULL && name == NULL)
 		    || (bgp->name && name && strcmp(bgp->name, name) == 0))
 			return bgp;
+	}
 	return NULL;
 }
 
@@ -4504,6 +4507,12 @@ bool peer_active(struct peer *peer)
 {
 	if (BGP_CONNECTION_SU_UNSPEC(peer->connection))
 		return false;
+
+	if (peer->bfd_config) {
+		if (bfd_session_is_down(peer->bfd_config->session))
+			return false;
+	}
+
 	if (peer->afc[AFI_IP][SAFI_UNICAST] || peer->afc[AFI_IP][SAFI_MULTICAST]
 	    || peer->afc[AFI_IP][SAFI_LABELED_UNICAST]
 	    || peer->afc[AFI_IP][SAFI_MPLS_VPN] || peer->afc[AFI_IP][SAFI_ENCAP]
@@ -8375,7 +8384,7 @@ void bgp_master_init(struct event_loop *master, const int buffer_size,
 	bm->terminating = false;
 	bm->socket_buffer = buffer_size;
 	bm->wait_for_fib = false;
-	bm->tcp_dscp = IPTOS_PREC_INTERNETCONTROL;
+	bm->ip_tos = IPTOS_PREC_INTERNETCONTROL;
 	bm->inq_limit = BM_DEFAULT_Q_LIMIT;
 	bm->outq_limit = BM_DEFAULT_Q_LIMIT;
 	bm->t_bgp_sync_label_manager = NULL;
@@ -8547,6 +8556,7 @@ void bgp_init(unsigned short instance)
 
 	/* BGP inits. */
 	bgp_attr_init();
+	bgp_labels_init();
 	bgp_debug_init();
 	bgp_community_alias_init();
 	bgp_dump_init();

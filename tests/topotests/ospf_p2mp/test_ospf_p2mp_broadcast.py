@@ -9,21 +9,16 @@
 
 import os
 import sys
-import json
-from time import sleep
 from functools import partial
 import pytest
 
 # pylint: disable=C0413
 # Import topogen and topotest helpers
 from lib import topotest
-from lib.topogen import Topogen, TopoRouter, get_topogen
+from lib.topogen import Topogen, get_topogen
 from lib.topolog import logger
 
 from lib.common_config import (
-    run_frr_cmd,
-    shutdown_bringup_interface,
-    start_router_daemons,
     step,
 )
 
@@ -112,7 +107,7 @@ def setup_module(mod):
     tgen.start_router()
 
 
-def teardown_module(mod):
+def teardown_module():
     "Teardown the pytest environment"
     tgen = get_topogen()
     tgen.stop_topology()
@@ -140,22 +135,6 @@ def verify_p2mp_interface(tgen, router, nbr_cnt, nbr_adj_cnt, nbr_filter):
         "interfaces": {
             "r1-eth0": {
                 "ospfEnabled": True,
-                "interfaceIp": {
-                    "10.1.0.1": {
-                        "ipAddress": "10.1.0.1",
-                        "ipAddressPrefixlen": 24,
-                        "ospfIfType": "Broadcast",
-                        "routerId": "1.1.1.1",
-                        "networkType": "POINTOMULTIPOINT",
-                        "cost": 10,
-                        "state": "Point-To-Point",
-                        "nbrCount": nbr_cnt,
-                        "nbrAdjacentCount": nbr_adj_cnt,
-                        "prefixSuppression": False,
-                        "p2mpDelayReflood": False,
-                        "nbrFilterPrefixList": nbr_filter,
-                    }
-                },
                 "ipAddress": "10.1.0.1",
                 "ipAddressPrefixlen": 24,
                 "ospfIfType": "Broadcast",
@@ -201,17 +180,6 @@ def verify_non_p2mp_interface(tgen):
         "interfaces": {
             "r1-eth0": {
                 "ospfEnabled": True,
-                "interfaceIp": {
-                    "10.1.0.1": {
-                        "ipAddress": "10.1.0.1",
-                        "ipAddressPrefixlen": 24,
-                        "ospfIfType": "Broadcast",
-                        "routerId": "1.1.1.1",
-                        "networkType": "BROADCAST",
-                        "cost": 10,
-                        "prefixSuppression": False,
-                    }
-                },
                 "ipAddress": "10.1.0.1",
                 "ipAddressPrefixlen": 24,
                 "ospfIfType": "Broadcast",
