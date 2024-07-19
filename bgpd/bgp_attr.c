@@ -2575,7 +2575,6 @@ bgp_attr_ext_communities(struct bgp_attr_parser_args *args)
 	struct peer *const peer = args->peer;
 	struct attr *const attr = args->attr;
 	const bgp_size_t length = args->length;
-	uint8_t sticky = 0;
 	bool proxy = false;
 	struct ecommunity *ecomm;
 
@@ -2605,21 +2604,20 @@ bgp_attr_ext_communities(struct bgp_attr_parser_args *args)
 	attr->df_pref = bgp_attr_df_pref_from_ec(attr, &attr->df_alg);
 
 	/* Extract MAC mobility sequence number, if any. */
-	attr->mm_seqnum = bgp_attr_mac_mobility_seqnum(attr, &sticky);
-	attr->sticky = sticky;
+	attr->mm_seqnum = bgp_attr_mac_mobility_seqnum(attr);
 
 	/* Check if this is a Gateway MAC-IP advertisement */
-	attr->default_gw = bgp_attr_default_gw(attr);
+	bgp_attr_default_gw(attr);
 
 	/* Handle scenario where router flag ecommunity is not
 	 * set but default gw ext community is present.
 	 * Use default gateway, set and propogate R-bit.
 	 */
-	if (attr->default_gw)
-		attr->router_flag = 1;
+	if (CHECK_FLAG(attr->evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW))
+		SET_FLAG(attr->evpn_flags, ATTR_EVPN_FLAG_ROUTER);
 
 	/* Check EVPN Neighbor advertisement flags, R-bit */
-	bgp_attr_evpn_na_flag(attr, &attr->router_flag, &proxy);
+	bgp_attr_evpn_na_flag(attr, &proxy);
 	if (proxy)
 		attr->es_flags |= ATTR_ES_PROXY_ADVERT;
 
@@ -2721,17 +2719,20 @@ static int bgp_attr_encap(struct bgp_attr_parser_args *args)
 		}
 	}
 
-	while (length >= 4) {
+	while (STREAM_READABLE(BGP_INPUT(peer)) >= 4) {
 		uint16_t subtype = 0;
 		uint16_t sublength = 0;
 		struct bgp_attr_encap_subtlv *tlv;
 
 		if (BGP_ATTR_ENCAP == type) {
 			subtype = stream_getc(BGP_INPUT(peer));
-			sublength = (subtype < 128)
-					    ? stream_getc(BGP_INPUT(peer))
-					    : stream_getw(BGP_INPUT(peer));
-			length -= 2;
+			if (subtype < 128) {
+				sublength = stream_getc(BGP_INPUT(peer));
+				length -= 2;
+			} else {
+				sublength = stream_getw(BGP_INPUT(peer));
+				length -= 3;
+			}
 #ifdef ENABLE_BGP_VNC
 		} else {
 			subtype = stream_getw(BGP_INPUT(peer));
@@ -4464,6 +4465,8 @@ bgp_size_t bgp_packet_attribute(struct bgp *bgp, struct peer *peer,
 					 addpath_tx_id, attr);
 		bgp_packet_mpattr_end(s, mpattrlen_pos);
 	}
+
+	(void)peer_sort(peer);
 
 	/* Origin attribute. */
 	stream_putc(s, BGP_ATTR_FLAG_TRANS);

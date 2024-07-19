@@ -1159,9 +1159,8 @@ static void build_evpn_route_extcomm(struct bgpevpn *vpn, struct attr *attr,
 	}
 
 	/* Add MAC mobility (sticky) if needed. */
-	if (attr->sticky) {
+	if (CHECK_FLAG(attr->evpn_flags, ATTR_EVPN_FLAG_STICKY)) {
 		seqnum = 0;
-		memset(&ecom_sticky, 0, sizeof(ecom_sticky));
 		encode_mac_mobility_extcomm(1, seqnum, &eval_sticky);
 		ecom_sticky.size = 1;
 		ecom_sticky.unit_size = ECOMMUNITY_SIZE;
@@ -1179,8 +1178,7 @@ static void build_evpn_route_extcomm(struct bgpevpn *vpn, struct attr *attr,
 	}
 
 	/* Add default gateway, if needed. */
-	if (attr->default_gw) {
-		memset(&ecom_default_gw, 0, sizeof(ecom_default_gw));
+	if (CHECK_FLAG(attr->evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW)) {
 		encode_default_gw_extcomm(&eval_default_gw);
 		ecom_default_gw.size = 1;
 		ecom_default_gw.unit_size = ECOMMUNITY_SIZE;
@@ -1191,9 +1189,11 @@ static void build_evpn_route_extcomm(struct bgpevpn *vpn, struct attr *attr,
 	}
 
 	proxy = !!(attr->es_flags & ATTR_ES_PROXY_ADVERT);
-	if (attr->router_flag || proxy) {
-		memset(&ecom_na, 0, sizeof(ecom_na));
-		encode_na_flag_extcomm(&eval_na, attr->router_flag, proxy);
+	if (CHECK_FLAG(attr->evpn_flags, ATTR_EVPN_FLAG_ROUTER) || proxy) {
+		encode_na_flag_extcomm(&eval_na,
+				       CHECK_FLAG(attr->evpn_flags,
+						  ATTR_EVPN_FLAG_ROUTER),
+				       proxy);
 		ecom_na.size = 1;
 		ecom_na.unit_size = ECOMMUNITY_SIZE;
 		ecom_na.val = (uint8_t *)eval_na.val;
@@ -1278,12 +1278,15 @@ enum zclient_send_status evpn_zebra_install(struct bgp *bgp, struct bgpevpn *vpn
 		flags = 0;
 
 		if (pi->sub_type == BGP_ROUTE_IMPORTED) {
-			if (pi->attr->sticky)
+			if (CHECK_FLAG(pi->attr->evpn_flags,
+				       ATTR_EVPN_FLAG_STICKY))
 				SET_FLAG(flags, ZEBRA_MACIP_TYPE_STICKY);
-			if (pi->attr->default_gw)
+			if (CHECK_FLAG(pi->attr->evpn_flags,
+				       ATTR_EVPN_FLAG_DEFAULT_GW))
 				SET_FLAG(flags, ZEBRA_MACIP_TYPE_GW);
 			if (is_evpn_prefix_ipaddr_v6(p) &&
-					pi->attr->router_flag)
+			    CHECK_FLAG(pi->attr->evpn_flags,
+				       ATTR_EVPN_FLAG_ROUTER))
 				SET_FLAG(flags, ZEBRA_MACIP_TYPE_ROUTER_FLAG);
 
 			seq = mac_mobility_seqnum(pi->attr);
@@ -1837,7 +1840,8 @@ static void bgp_evpn_get_sync_info(struct bgp *bgp, esi_t *esi,
 			*active_on_peer = true;
 		}
 
-		if (second_best_path->attr->router_flag)
+		if (CHECK_FLAG(second_best_path->attr->evpn_flags,
+			       ATTR_EVPN_FLAG_ROUTER))
 			*peer_router = true;
 
 		/* we use both proxy and non-proxy imports to
@@ -1937,7 +1941,6 @@ static int update_evpn_route_entry(struct bgp *bgp, struct bgpevpn *vpn,
 	struct attr local_attr;
 	struct bgp_labels bgp_labels = {};
 	int route_change = 1;
-	uint8_t sticky = 0;
 	const struct prefix_evpn *evp;
 
 	*pi = NULL;
@@ -1969,9 +1972,7 @@ static int update_evpn_route_entry(struct bgp *bgp, struct bgpevpn *vpn,
 		local_attr = *attr;
 
 		/* Extract MAC mobility sequence number, if any. */
-		local_attr.mm_seqnum =
-			bgp_attr_mac_mobility_seqnum(&local_attr, &sticky);
-		local_attr.sticky = sticky;
+		local_attr.mm_seqnum = bgp_attr_mac_mobility_seqnum(&local_attr);
 
 		/* Add (or update) attribute to hash. */
 		attr_new = bgp_attr_intern(&local_attr);
@@ -2066,9 +2067,8 @@ static int update_evpn_route_entry(struct bgp *bgp, struct bgpevpn *vpn,
 					       BGP_PATH_ATTR_CHANGED);
 
 			/* Extract MAC mobility sequence number, if any. */
-			local_attr.mm_seqnum = bgp_attr_mac_mobility_seqnum(
-				&local_attr, &sticky);
-			local_attr.sticky = sticky;
+			local_attr.mm_seqnum =
+				bgp_attr_mac_mobility_seqnum(&local_attr);
 
 			attr_new = bgp_attr_intern(&local_attr);
 
@@ -2201,10 +2201,12 @@ static int update_evpn_route(struct bgp *bgp, struct bgpevpn *vpn,
 	attr.nexthop = vpn->originator_ip;
 	attr.mp_nexthop_global_in = vpn->originator_ip;
 	attr.mp_nexthop_len = BGP_ATTR_NHLEN_IPV4;
-	attr.sticky = CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_STICKY) ? 1 : 0;
-	attr.default_gw = CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_GW) ? 1 : 0;
-	attr.router_flag = CHECK_FLAG(flags,
-				      ZEBRA_MACIP_TYPE_ROUTER_FLAG) ? 1 : 0;
+	if (CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_STICKY))
+		SET_FLAG(attr.evpn_flags, ATTR_EVPN_FLAG_STICKY);
+	if (CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_GW))
+		SET_FLAG(attr.evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW);
+	if (CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_ROUTER_FLAG))
+		SET_FLAG(attr.evpn_flags, ATTR_EVPN_FLAG_ROUTER);
 	if (CHECK_FLAG(flags, ZEBRA_MACIP_TYPE_PROXY_ADVERT))
 		attr.es_flags |= ATTR_ES_PROXY_ADVERT;
 
@@ -2506,13 +2508,12 @@ void bgp_evpn_update_type2_route_entry(struct bgp *bgp, struct bgpevpn *vpn,
 	attr.nexthop = vpn->originator_ip;
 	attr.mp_nexthop_global_in = vpn->originator_ip;
 	attr.mp_nexthop_len = BGP_ATTR_NHLEN_IPV4;
-	attr.sticky = (local_pi->attr->sticky) ? 1 : 0;
-	attr.router_flag = (local_pi->attr->router_flag) ? 1 : 0;
+	attr.evpn_flags = local_pi->attr->evpn_flags;
 	attr.es_flags = local_pi->attr->es_flags;
-	if (local_pi->attr->default_gw) {
-		attr.default_gw = 1;
+	if (CHECK_FLAG(local_pi->attr->evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW)) {
+		SET_FLAG(attr.evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW);
 		if (is_evpn_prefix_ipaddr_v6(&evp))
-			attr.router_flag = 1;
+			SET_FLAG(attr.evpn_flags, ATTR_EVPN_FLAG_ROUTER);
 	}
 	memcpy(&attr.esi, &local_pi->attr->esi, sizeof(esi_t));
 	bgp_evpn_get_rmac_nexthop(vpn, &evp, &attr,
@@ -3036,6 +3037,9 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 			"vrf %s: import evpn prefix %pFX parent %p flags 0x%x",
 			vrf_id_to_name(bgp_vrf->vrf_id), evp, parent_pi,
 			parent_pi->flags);
+
+	if (bgp_vrf->vrf_id == VRF_UNKNOWN)
+		return -1;
 
 	/* Create (or fetch) route within the VRF. */
 	/* NOTE: There is no RD here. */
@@ -6329,16 +6333,16 @@ struct bgpevpn *bgp_evpn_new(struct bgp *bgp, vni_t vni,
 void bgp_evpn_free(struct bgp *bgp, struct bgpevpn *vpn)
 {
 	struct bgp_dest *dest = NULL;
-	uint32_t ann_count = zebra_announce_count(&bm->zebra_announce_head);
+	struct bgp_dest *dest_next = NULL;
 
-	while (ann_count) {
-		dest = zebra_announce_pop(&bm->zebra_announce_head);
-		ann_count--;
+	for (dest = zebra_announce_first(&bm->zebra_announce_head); dest;
+	     dest = dest_next) {
+		dest_next = zebra_announce_next(&bm->zebra_announce_head, dest);
 		if (dest->za_vpn == vpn) {
 			bgp_path_info_unlock(dest->za_bgp_pi);
 			bgp_dest_unlock_node(dest);
-		} else
-			zebra_announce_add_tail(&bm->zebra_announce_head, dest);
+			zebra_announce_del(&bm->zebra_announce_head, dest);
+		}
 	}
 
 	bgp_evpn_remote_ip_hash_destroy(vpn);
@@ -6981,6 +6985,17 @@ int bgp_evpn_local_l3vni_del(vni_t l3vni, vrf_id_t vrf_id)
 		bgp_delete(bgp_vrf);
 
 	return 0;
+}
+
+/*
+ * When bgp instance goes down also clean up what might have been left over
+ * from evpn.
+ */
+void bgp_evpn_instance_down(struct bgp *bgp)
+{
+	/* If we have a stale local vni, delete it */
+	if (bgp->l3vni)
+		bgp_evpn_local_l3vni_del(bgp->l3vni, bgp->vrf_id);
 }
 
 /*

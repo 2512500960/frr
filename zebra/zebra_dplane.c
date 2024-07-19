@@ -4315,6 +4315,10 @@ dplane_route_update_internal(struct route_node *rn,
 					continue;
 
 				if (CHECK_FLAG(nexthop->flags,
+					       NEXTHOP_FLAG_DUPLICATE))
+					continue;
+
+				if (CHECK_FLAG(nexthop->flags,
 					       NEXTHOP_FLAG_ACTIVE))
 					SET_FLAG(nexthop->flags,
 						 NEXTHOP_FLAG_FIB);
@@ -7445,6 +7449,11 @@ static void dplane_thread_loop(struct event *event)
 		if (IS_ZEBRA_DEBUG_DPLANE_DETAIL)
 			zlog_debug("dplane dequeues %d completed work from provider %s",
 				   counter, dplane_provider_get_name(prov));
+
+		if (event_should_yield(event)) {
+			reschedule = true;
+			break;
+		}
 
 		/* Locate next provider */
 		prov = dplane_prov_list_next(&zdplane_info.dg_providers, prov);

@@ -483,13 +483,19 @@ static void lsp_update_data(struct isis_lsp *lsp, struct isis_lsp_hdr *hdr,
 
 	lsp->tlvs = tlvs;
 
-	if (area->dynhostname && lsp->tlvs->hostname
-	    && lsp->hdr.rem_lifetime) {
-		isis_dynhn_insert(
-			area->isis, lsp->hdr.lsp_id, lsp->tlvs->hostname,
-			(lsp->hdr.lsp_bits & LSPBIT_IST) == IS_LEVEL_1_AND_2
-				? IS_LEVEL_2
-				: IS_LEVEL_1);
+	if (area->dynhostname && lsp->hdr.rem_lifetime) {
+		if (lsp->tlvs->hostname) {
+			isis_dynhn_insert(area->isis, lsp->hdr.lsp_id,
+					  lsp->tlvs->hostname,
+					  (lsp->hdr.lsp_bits & LSPBIT_IST) ==
+							  IS_LEVEL_1_AND_2
+						  ? IS_LEVEL_2
+						  : IS_LEVEL_1);
+		} else {
+			if (!LSP_PSEUDO_ID(lsp->hdr.lsp_id) &&
+			    !LSP_FRAGMENT(lsp->hdr.lsp_id))
+				isis_dynhn_remove(area->isis, lsp->hdr.lsp_id);
+		}
 	}
 
 	return;
@@ -1357,17 +1363,11 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 	}
 
 	/* Add SRv6 Locator TLV. */
-	if (area->srv6db.config.enabled &&
-	    !list_isempty(area->srv6db.srv6_locator_chunks)) {
+	if (area->srv6db.config.enabled && area->srv6db.srv6_locator) {
 		struct isis_srv6_locator locator = {};
-		struct srv6_locator_chunk *chunk;
-
-		/* TODO: support more than one locator */
-		chunk = (struct srv6_locator_chunk *)listgetdata(
-			listhead(area->srv6db.srv6_locator_chunks));
 
 		locator.metric = 0;
-		locator.prefix = chunk->prefix;
+		locator.prefix = area->srv6db.srv6_locator->prefix;
 		locator.flags = 0;
 		locator.algorithm = 0;
 
@@ -1387,7 +1387,8 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 
 		isis_tlvs_add_ipv6_reach(lsp->tlvs,
 					 isis_area_ipv6_topology(area),
-					 &chunk->prefix, 0, false, NULL);
+					 &area->srv6db.srv6_locator->prefix, 0,
+					 false, NULL);
 	}
 
 	/* IPv4 address and TE router ID TLVs.
@@ -2388,6 +2389,10 @@ void lsp_tick(struct event *thread)
 						next = lspdb_next(
 							&area->lspdb[level],
 							next);
+
+				if (!LSP_PSEUDO_ID(lsp->hdr.lsp_id))
+					isis_dynhn_remove(area->isis,
+							  lsp->hdr.lsp_id);
 
 				lspdb_del(&area->lspdb[level], lsp);
 				lsp_destroy(lsp);

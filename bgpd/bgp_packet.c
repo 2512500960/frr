@@ -696,10 +696,9 @@ void bgp_open_send(struct peer_connection *connection)
 	bgp_packet_set_size(s);
 
 	if (bgp_debug_neighbor_events(peer))
-		zlog_debug(
-			"%s sending OPEN, version %d, my as %u, holdtime %d, id %pI4",
-			peer->host, BGP_VERSION_4, local_as, send_holdtime,
-			&peer->local_id);
+		zlog_debug("%pBP fd %d sending OPEN, version %d, my as %u, holdtime %d, id %pI4",
+			   peer, peer->connection->fd, BGP_VERSION_4, local_as,
+			   send_holdtime, &peer->local_id);
 
 	/* Dump packet if debug option is set. */
 	/* bgp_packet_dump (s); */
@@ -1296,7 +1295,7 @@ void bgp_capability_send(struct peer *peer, afi_t afi, safi_t safi,
 		stream_putc(s, 0);
 		gr_restart_time = peer->bgp->restart_time;
 
-		if (peer->bgp->t_startup) {
+		if (peer->bgp->t_startup || bgp_in_graceful_restart()) {
 			SET_FLAG(gr_restart_time, GRACEFUL_RESTART_R_BIT);
 			SET_FLAG(peer->cap, PEER_CAP_GRACEFUL_RESTART_R_BIT_ADV);
 		}
@@ -1978,6 +1977,14 @@ static int bgp_open_receive(struct peer_connection *connection,
 					  BGP_NOTIFY_OPEN_BAD_PEER_AS,
 					  notify_data_remote_as, 2);
 		return BGP_Stop;
+	} else if (peer->as_type == AS_AUTO) {
+		if (remote_as == peer->bgp->as) {
+			peer->as = peer->local_as;
+			SET_FLAG(peer->as_type, AS_INTERNAL);
+		} else {
+			peer->as = remote_as;
+			SET_FLAG(peer->as_type, AS_EXTERNAL);
+		}
 	} else if (peer->as_type == AS_INTERNAL) {
 		if (remote_as != peer->bgp->as) {
 			if (bgp_debug_neighbor_events(peer))
@@ -3438,7 +3445,7 @@ static void bgp_dynamic_capability_fqdn(uint8_t *pnt, int action,
 		}
 
 		len = *data;
-		if (data + len > end) {
+		if (data + len + 1 > end) {
 			zlog_err("%pBP: Received invalid FQDN capability length (host name) %d",
 				 peer, hdr->length);
 			return;
@@ -3469,7 +3476,7 @@ static void bgp_dynamic_capability_fqdn(uint8_t *pnt, int action,
 
 		/* domainname */
 		len = *data;
-		if (data + len > end) {
+		if (data + len + 1 > end) {
 			zlog_err("%pBP: Received invalid FQDN capability length (domain name) %d",
 				 peer, len);
 			return;
@@ -3695,7 +3702,7 @@ static void bgp_dynamic_capability_software_version(uint8_t *pnt, int action,
 	char soft_version[BGP_MAX_SOFT_VERSION + 1] = {};
 
 	if (action == CAPABILITY_ACTION_SET) {
-		if (data + len > end) {
+		if (data + len + 1 > end) {
 			zlog_err("%pBP: Received invalid Software Version capability length %d",
 				 peer, len);
 			return;
