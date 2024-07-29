@@ -3023,7 +3023,9 @@ int isis_instance_flex_algo_create(struct nb_cb_create_args *args)
 {
 	struct isis_area *area;
 	struct flex_algo *fa;
-	bool advertise;
+	bool advertise, update_te;
+	struct isis_circuit *circuit;
+	struct listnode *node;
 	uint32_t algorithm;
 	uint32_t priority = FLEX_ALGO_PRIO_DEFAULT;
 	struct isis_flex_algo_alloc_arg arg;
@@ -3036,6 +3038,7 @@ int isis_instance_flex_algo_create(struct nb_cb_create_args *args)
 		area = nb_running_get_entry(args->dnode, NULL, true);
 		arg.algorithm = algorithm;
 		arg.area = area;
+		update_te = list_isempty(area->flex_algos->flex_algos);
 		fa = flex_algo_alloc(area->flex_algos, algorithm, &arg);
 		fa->priority = priority;
 		fa->advertise_definition = advertise;
@@ -3046,6 +3049,12 @@ int isis_instance_flex_algo_create(struct nb_cb_create_args *args)
 				&fa->admin_group_include_any);
 			admin_group_allow_explicit_zero(
 				&fa->admin_group_include_all);
+		}
+		if (update_te) {
+			for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node,
+						  circuit))
+				isis_link_params_update_asla(circuit,
+							     circuit->interface);
 		}
 		lsp_regenerate_schedule(area, area->is_type, 0);
 		break;
@@ -3060,6 +3069,9 @@ int isis_instance_flex_algo_create(struct nb_cb_create_args *args)
 
 int isis_instance_flex_algo_destroy(struct nb_cb_destroy_args *args)
 {
+	struct isis_circuit *circuit;
+	struct listnode *node, *nnode;
+	struct flex_algo *fa;
 	struct isis_area *area;
 	uint32_t algorithm;
 
@@ -3068,7 +3080,17 @@ int isis_instance_flex_algo_destroy(struct nb_cb_destroy_args *args)
 
 	switch (args->event) {
 	case NB_EV_APPLY:
-		flex_algo_delete(area->flex_algos, algorithm);
+		for (ALL_LIST_ELEMENTS(area->flex_algos->flex_algos, node,
+				       nnode, fa)) {
+			if (fa->algorithm == algorithm)
+				flex_algo_free(area->flex_algos, fa);
+		}
+		if (list_isempty(area->flex_algos->flex_algos)) {
+			for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node,
+						  circuit))
+				isis_link_params_update_asla(circuit,
+							     circuit->interface);
+		}
 		lsp_regenerate_schedule(area, area->is_type, 0);
 		break;
 	case NB_EV_VALIDATE:
