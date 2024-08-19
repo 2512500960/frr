@@ -351,7 +351,9 @@ int bgp_find_or_add_nexthop(struct bgp *bgp_route, struct bgp *bgp_nexthop,
 			}
 			return 0;
 		}
-
+		if (afi == AFI_IP6 && p.family == AF_INET)
+			/* IPv4 mapped IPv6 nexthop address */
+			afi = AFI_IP;
 		srte_color = bgp_attr_get_color(pi->attr);
 
 	} else if (peer) {
@@ -1078,14 +1080,25 @@ static int make_prefix(int afi, struct bgp_path_info *pi, struct prefix *p)
 							&ipv4);
 						p->u.prefix4 = ipv4;
 						p->prefixlen = IPV4_MAX_BITLEN;
+						p->family = AF_INET;
 					} else
 						p->u.prefix6 =
 							pi->attr->mp_nexthop_global;
 				} else
 					p->u.prefix6 =
 						pi->attr->mp_nexthop_local;
-			} else
-				p->u.prefix6 = pi->attr->mp_nexthop_global;
+			} else {
+				if (IS_MAPPED_IPV6(
+					    &pi->attr->mp_nexthop_global)) {
+					ipv4_mapped_ipv6_to_ipv4(&pi->attr->mp_nexthop_global,
+								 &ipv4);
+					p->u.prefix4 = ipv4;
+					p->prefixlen = IPV4_MAX_BITLEN;
+					p->family = AF_INET;
+				} else
+					p->u.prefix6 =
+						pi->attr->mp_nexthop_global;
+			}
 		}
 		break;
 	default:
@@ -1300,11 +1313,13 @@ void evaluate_paths(struct bgp_nexthop_cache *bnc)
 
 		bool bnc_is_valid_nexthop = false;
 		bool path_valid = false;
+		struct bgp_route_evpn *bre =
+			bgp_attr_get_evpn_overlay(path->attr);
 
 		if (safi == SAFI_UNICAST &&
 		    path->sub_type == BGP_ROUTE_IMPORTED &&
 		    bgp_path_info_num_labels(path) &&
-		    (path->attr->evpn_overlay.type != OVERLAY_INDEX_GATEWAY_IP)) {
+		    !(bre && bre->type == OVERLAY_INDEX_GATEWAY_IP)) {
 			bnc_is_valid_nexthop =
 				bgp_isvalid_nexthop_for_l3vpn(bnc, path)
 					? true

@@ -1267,6 +1267,8 @@ void frr_fini(void)
 	/* frrmod_init -> nothing needed / hooks */
 	rcu_shutdown();
 
+	frrmod_terminate();
+
 	/* also log memstats to stderr when stderr goes to a file*/
 	if (debug_memstats_at_exit || !isatty(STDERR_FILENO))
 		have_leftovers = log_memstats(stderr, di->name);
@@ -1473,4 +1475,12 @@ const char *frr_vers2str(uint32_t version, char *buf, int buflen)
 		 MINOR_FRRVERSION(version), SUB_FRRVERSION(version));
 
 	return buf;
+}
+
+bool frr_is_daemon(void)
+{
+	if (di)
+		return true;
+
+	return false;
 }

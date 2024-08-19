@@ -411,6 +411,14 @@ for ``master`` branch:
 
 and create ``frr`` user and ``frrvty`` group as shown above.
 
+Newer versions of Address Sanitizers require a sysctl to be changed
+to allow for the tests to be successfully run.  This is also true
+for Undefined behavior Sanitizers as well as Memory Sanitizer.
+
+.. code:: shell
+
+   sysctl vm.mmap_rnd_bits=28
+
 Debugging Topotest Failures
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -1332,6 +1340,15 @@ Example:
            router.load_config(TopoRouter.RD_ZEBRA, "zebra.conf")
            router.load_config(TopoRouter.RD_OSPF)
 
+or using unified config (specifying which daemons to run is optional):
+
+.. code:: py
+
+      for _, (rname, router) in enumerate(router_list.items(), 1):
+         router.load_frr_config(os.path.join(CWD, "{}/frr.conf".format(rname)), [
+            TopoRouter.RD_ZEBRA
+            TopoRouter.RD_MGMTD,
+            TopoRouter.RD_BGP])
 
 - The topology definition or build function
 
