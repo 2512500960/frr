@@ -66,27 +66,6 @@ static struct cmd_node debug_node = {
 	.config_write = pim_debug_config_write,
 };
 
-static struct vrf *pim_cmd_lookup_vrf(struct vty *vty, struct cmd_token *argv[],
-				      const int argc, int *idx, bool uj)
-{
-	struct vrf *vrf;
-
-	if (argv_find(argv, argc, "NAME", idx))
-		vrf = vrf_lookup_by_name(argv[*idx]->arg);
-	else
-		vrf = vrf_lookup_by_id(VRF_DEFAULT);
-
-	if (!vrf) {
-		if (uj)
-			vty_json_empty(vty, NULL);
-		else
-			vty_out(vty, "Specified VRF: %s does not exist\n",
-				argv[*idx]->arg);
-	}
-
-	return vrf;
-}
-
 static void pim_show_assert_helper(struct vty *vty,
 				   struct pim_interface *pim_ifp,
 				   struct pim_ifchannel *ch, time_t now)
@@ -588,7 +567,7 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 }
 
 static void igmp_show_interface_join(struct pim_instance *pim, struct vty *vty,
-				     bool uj)
+				     bool uj, enum gm_join_type join_type)
 {
 	struct interface *ifp;
 	time_t now;
@@ -633,6 +612,10 @@ static void igmp_show_interface_join(struct pim_instance *pim, struct vty *vty,
 			char source_str[INET_ADDRSTRLEN];
 			char uptime[10];
 
+			if (ij->join_type != join_type &&
+			    ij->join_type != GM_JOIN_BOTH)
+				continue;
+
 			pim_time_uptime(uptime, sizeof(uptime),
 					now - ij->sock_creation);
 			pim_inet4_dump("<grp?>", ij->group_addr, group_str,
@@ -675,6 +658,91 @@ static void igmp_show_interface_join(struct pim_instance *pim, struct vty *vty,
 					group_str, ij->sock_fd, uptime);
 			}
 		} /* for (pim_ifp->gm_join_list) */
+
+	} /* for (iflist) */
+
+	if (uj)
+		vty_json(vty, json);
+}
+
+static void igmp_show_interface_static_group(struct pim_instance *pim,
+					     struct vty *vty, bool uj)
+{
+	struct interface *ifp;
+	json_object *json = NULL;
+	json_object *json_iface = NULL;
+	json_object *json_grp = NULL;
+	json_object *json_grp_arr = NULL;
+
+	if (uj) {
+		json = json_object_new_object();
+		json_object_string_add(json, "vrf",
+				       vrf_id_to_name(pim->vrf->vrf_id));
+	} else {
+		vty_out(vty,
+			"Interface        Address         Source          Group\n");
+	}
+
+	FOR_ALL_INTERFACES (pim->vrf, ifp) {
+		struct pim_interface *pim_ifp;
+		struct listnode *node;
+		struct static_group *stgrp;
+		struct in_addr pri_addr;
+		char pri_addr_str[INET_ADDRSTRLEN];
+
+		pim_ifp = ifp->info;
+
+		if (!pim_ifp)
+			continue;
+
+		if (!pim_ifp->static_group_list)
+			continue;
+
+		pri_addr = pim_find_primary_addr(ifp);
+		pim_inet4_dump("<pri?>", pri_addr, pri_addr_str,
+			       sizeof(pri_addr_str));
+
+		for (ALL_LIST_ELEMENTS_RO(pim_ifp->static_group_list, node,
+					  stgrp)) {
+			char group_str[INET_ADDRSTRLEN];
+			char source_str[INET_ADDRSTRLEN];
+
+			pim_inet4_dump("<grp?>", stgrp->group_addr, group_str,
+				       sizeof(group_str));
+			pim_inet4_dump("<src?>", stgrp->source_addr, source_str,
+				       sizeof(source_str));
+
+			if (uj) {
+				json_object_object_get_ex(json, ifp->name,
+							  &json_iface);
+
+				if (!json_iface) {
+					json_iface = json_object_new_object();
+					json_object_string_add(json_iface,
+							       "name",
+							       ifp->name);
+					json_object_object_add(json, ifp->name,
+							       json_iface);
+					json_grp_arr = json_object_new_array();
+					json_object_object_add(json_iface,
+							       "groups",
+							       json_grp_arr);
+				}
+
+				json_grp = json_object_new_object();
+				json_object_string_add(json_grp, "source",
+						       source_str);
+				json_object_string_add(json_grp, "group",
+						       group_str);
+				json_object_string_add(json_grp, "primaryAddr",
+						       pri_addr_str);
+				json_object_array_add(json_grp_arr, json_grp);
+			} else {
+				vty_out(vty, "%-16s %-15s %-15s %-15s\n",
+					ifp->name, pri_addr_str, source_str,
+					group_str);
+			}
+		} /* for (pim_ifp->static_group_list) */
 
 	} /* for (iflist) */
 
@@ -1720,10 +1788,19 @@ DEFUN (show_ip_igmp_join,
 	if (!vrf)
 		return CMD_WARNING;
 
-	igmp_show_interface_join(vrf->info, vty, uj);
+	igmp_show_interface_join(vrf->info, vty, uj, GM_JOIN_STATIC);
 
 	return CMD_SUCCESS;
 }
+ALIAS (show_ip_igmp_join,
+       show_ip_igmp_join_group_cmd,
+       "show ip igmp [vrf NAME] join-group [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "IGMP static join information\n"
+       JSON_STR);
 
 DEFUN (show_ip_igmp_join_vrf_all,
        show_ip_igmp_join_vrf_all_cmd,
@@ -1749,7 +1826,124 @@ DEFUN (show_ip_igmp_join_vrf_all,
 			first = false;
 		} else
 			vty_out(vty, "VRF: %s\n", vrf->name);
-		igmp_show_interface_join(vrf->info, vty, uj);
+		igmp_show_interface_join(vrf->info, vty, uj, GM_JOIN_STATIC);
+	}
+	if (uj)
+		vty_out(vty, "}\n");
+
+	return CMD_SUCCESS;
+}
+
+DEFUN (show_ip_igmp_proxy,
+       show_ip_igmp_proxy_cmd,
+       "show ip igmp [vrf NAME] proxy [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "IGMP proxy join information\n"
+       JSON_STR)
+{
+	int idx = 2;
+	bool uj = use_json(argc, argv);
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, uj);
+
+	if (!vrf)
+		return CMD_WARNING;
+
+	igmp_show_interface_join(vrf->info, vty, uj, GM_JOIN_PROXY);
+
+	return CMD_SUCCESS;
+}
+
+DEFUN (show_ip_igmp_proxy_vrf_all,
+       show_ip_igmp_proxy_vrf_all_cmd,
+       "show ip igmp vrf all proxy [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "IGMP proxy join information\n"
+       JSON_STR)
+{
+	bool uj = use_json(argc, argv);
+	struct vrf *vrf;
+	bool first = true;
+
+	if (uj)
+		vty_out(vty, "{ ");
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name) {
+		if (uj) {
+			if (!first)
+				vty_out(vty, ", ");
+			vty_out(vty, " \"%s\": ", vrf->name);
+			first = false;
+		} else
+			vty_out(vty, "VRF: %s\n", vrf->name);
+		igmp_show_interface_join(vrf->info, vty, uj, GM_JOIN_PROXY);
+	}
+	if (uj)
+		vty_out(vty, "}\n");
+
+	return CMD_SUCCESS;
+}
+ALIAS (show_ip_igmp_join_vrf_all,
+       show_ip_igmp_join_group_vrf_all_cmd,
+       "show ip igmp vrf all join-group [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "IGMP static join information\n"
+       JSON_STR);
+
+DEFUN (show_ip_igmp_static_group,
+       show_ip_igmp_static_group_cmd,
+       "show ip igmp [vrf NAME] static-group [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "Static group information\n"
+       JSON_STR)
+{
+	int idx = 2;
+	bool uj = use_json(argc, argv);
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, uj);
+
+	if (!vrf)
+		return CMD_WARNING;
+
+	igmp_show_interface_static_group(vrf->info, vty, uj);
+
+	return CMD_SUCCESS;
+}
+
+DEFUN (show_ip_igmp_static_group_vrf_all,
+       show_ip_igmp_static_group_vrf_all_cmd,
+       "show ip igmp vrf all static-group [json]",
+       SHOW_STR
+       IP_STR
+       IGMP_STR
+       VRF_CMD_HELP_STR
+       "Static group information\n"
+       JSON_STR)
+{
+	bool uj = use_json(argc, argv);
+	struct vrf *vrf;
+	bool first = true;
+
+	if (uj)
+		vty_out(vty, "{ ");
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name) {
+		if (uj) {
+			if (!first)
+				vty_out(vty, ", ");
+			vty_out(vty, " \"%s\": ", vrf->name);
+			first = false;
+		} else
+			vty_out(vty, "VRF: %s\n", vrf->name);
+		igmp_show_interface_static_group(vrf->info, vty, uj);
 	}
 	if (uj)
 		vty_out(vty, "}\n");
@@ -2626,6 +2820,75 @@ DEFPY (show_ip_pim_rp_vrf_all,
 					  (struct prefix *)group, !!json);
 }
 
+DEFPY (show_ip_pim_autorp,
+       show_ip_pim_autorp_cmd,
+       "show ip pim [vrf NAME] autorp [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       VRF_CMD_HELP_STR
+       "PIM AutoRP information\n"
+       JSON_STR)
+{
+	struct vrf *v;
+	json_object *json_parent = NULL;
+
+	v = vrf_lookup_by_name(vrf ? vrf : VRF_DEFAULT_NAME);
+	if (!v || !v->info) {
+		if (!json)
+			vty_out(vty, "%% Unable to find pim instance\n");
+		return CMD_WARNING;
+	}
+
+	if (json)
+		json_parent = json_object_new_object();
+
+	pim_autorp_show_autorp(vty, v->info, json_parent);
+
+	if (json)
+		vty_json(vty, json_parent);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY (show_ip_pim_autorp_vrf_all,
+       show_ip_pim_autorp_vrf_all_cmd,
+       "show ip pim vrf all autorp [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       VRF_CMD_HELP_STR
+       "PIM AutoRP information\n"
+       JSON_STR)
+{
+	struct vrf *vrf;
+	json_object *json_parent = NULL;
+	json_object *json_vrf = NULL;
+
+	if (json)
+		json_parent = json_object_new_object();
+
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name) {
+		if (vrf->info) {
+			if (!json)
+				vty_out(vty, "VRF: %s\n", vrf->name);
+			else
+				json_vrf = json_object_new_object();
+
+			pim_autorp_show_autorp(vty, vrf->info, json_vrf);
+
+			if (json)
+				json_object_object_add(json_parent, vrf->name,
+						       json_vrf);
+		}
+	}
+
+	if (json)
+		vty_json(vty, json_parent);
+
+	return CMD_SUCCESS;
+}
+
 DEFPY (show_ip_pim_rpf,
        show_ip_pim_rpf_cmd,
        "show ip pim [vrf NAME] rpf [json$json]",
@@ -2707,7 +2970,7 @@ DEFPY (show_ip_pim_bsm_db,
 	return pim_show_bsm_db_helper(vrf, vty, !!json);
 }
 
-DEFPY (show_ip_pim_bsrp,
+DEFPY_HIDDEN (show_ip_pim_bsrp,
        show_ip_pim_bsrp_cmd,
        "show ip pim bsrp-info [vrf NAME] [json$json]",
        SHOW_STR
@@ -2718,6 +2981,109 @@ DEFPY (show_ip_pim_bsrp,
        JSON_STR)
 {
 	return pim_show_group_rp_mappings_info_helper(vrf, vty, !!json);
+}
+
+DEFPY (show_ip_pim_bsr_rpinfo,
+       show_ip_pim_bsr_rpinfo_cmd,
+       "show ip pim bsr rp-info [vrf NAME] [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       BSR_STR
+       "PIM cached group-rp mappings information received from BSR\n"
+       VRF_CMD_HELP_STR
+       JSON_STR)
+{
+	return pim_show_group_rp_mappings_info_helper(vrf, vty, !!json);
+}
+
+DEFPY (show_ip_pim_bsr_cand_bsr,
+       show_ip_pim_bsr_cand_bsr_cmd,
+       "show ip pim bsr candidate-bsr [vrf NAME$vrfname] [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       BSR_STR
+       "Current PIM router candidate BSR state\n"
+       VRF_CMD_HELP_STR
+       JSON_STR)
+{
+	int idx = 2;
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, !!json);
+
+	if (!vrf || !vrf->info)
+		return CMD_WARNING;
+
+	return pim_show_bsr_cand_bsr(vrf, vty, !!json);
+}
+
+
+DEFPY (show_ip_pim_bsr_cand_rp,
+       show_ip_pim_bsr_cand_rp_cmd,
+       "show ip pim bsr candidate-rp [vrf NAME$vrfname] [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       BSR_STR
+       "Current PIM router candidate RP state\n"
+       VRF_CMD_HELP_STR
+       JSON_STR)
+{
+	int idx = 2;
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, !!json);
+
+
+	if (!vrf || !vrf->info)
+		return CMD_WARNING;
+
+
+	return pim_show_bsr_cand_rp(vrf, vty, !!json);
+}
+
+DEFPY (show_ip_pim_bsr_rpdb,
+       show_ip_pim_bsr_rpdb_cmd,
+       "show ip pim bsr candidate-rp-database [vrf NAME$vrfname] [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       BSR_STR
+       "Candidate RPs database on this router (if it is the BSR)\n"
+       VRF_CMD_HELP_STR
+       JSON_STR)
+{
+	int idx = 2;
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, false);
+
+	if (!vrf || !vrf->info)
+		return CMD_WARNING;
+
+	struct pim_instance *pim = vrf->info;
+	struct bsm_scope *scope = &pim->global_scope;
+
+	return pim_crp_db_show(vty, scope, !!json);
+}
+
+DEFPY (show_ip_pim_bsr_groups,
+       show_ip_pim_bsr_groups_cmd,
+       "show ip pim bsr groups [vrf NAME$vrfname] [json$json]",
+       SHOW_STR
+       IP_STR
+       PIM_STR
+       "boot-strap router information\n"
+       "Candidate RP groups\n"
+       VRF_CMD_HELP_STR
+       JSON_STR)
+{
+	int idx = 2;
+	struct vrf *vrf = pim_cmd_lookup_vrf(vty, argv, argc, &idx, false);
+
+	if (!vrf || !vrf->info)
+		return CMD_WARNING;
+
+	struct pim_instance *pim = vrf->info;
+	struct bsm_scope *scope = &pim->global_scope;
+
+	return pim_crp_groups_show(vty, scope, !!json);
 }
 
 DEFPY (show_ip_pim_statistics,
@@ -4219,6 +4585,108 @@ DEFPY_ATTR(no_ip_pim_rp_prefix_list,
 	return ret;
 }
 
+DEFPY (pim_autorp_discovery,
+       pim_autorp_discovery_cmd,
+       "[no] autorp discovery",
+       NO_STR
+       "AutoRP\n"
+       "Enable AutoRP discovery\n")
+{
+	if (no)
+		return pim_process_no_autorp_cmd(vty);
+	else
+		return pim_process_autorp_cmd(vty);
+}
+
+DEFPY (pim_autorp_announce_rp,
+       pim_autorp_announce_rp_cmd,
+       "[no] autorp announce A.B.C.D$rpaddr ![A.B.C.D/M$grp|group-list PREFIX_LIST$plist]",
+       NO_STR
+       "AutoRP\n"
+       "AutoRP Candidate RP announcement\n"
+       "AutoRP Candidate RP address\n"
+       "Group prefix\n"
+       "Prefix list\n"
+       "List name\n")
+{
+	return pim_process_autorp_candidate_rp_cmd(vty, no, rpaddr_str, (grp_str ? grp : NULL),
+						   plist);
+}
+
+DEFPY (pim_autorp_announce_scope_int,
+       pim_autorp_announce_scope_int_cmd,
+       "[no] autorp announce ![{scope (1-255) | interval (1-65535) | holdtime (0-65535)}]",
+       NO_STR
+       "AutoRP\n"
+       "AutoRP Candidate RP announcement\n"
+       "Packet scope (TTL)\n"
+       "TTL value\n"
+       "Announcement interval\n"
+       "Time in seconds\n"
+       "Announcement holdtime\n"
+       "Time in seconds\n")
+{
+	return pim_process_autorp_announce_scope_int_cmd(vty, no, scope_str,
+							 interval_str,
+							 holdtime_str);
+}
+
+DEFPY (pim_bsr_candidate_bsr,
+       pim_bsr_candidate_bsr_cmd,
+       "[no] bsr candidate-bsr [{priority (0-255)|source <address A.B.C.D|interface IFNAME|loopback$loopback|any$any>}]",
+       NO_STR
+       BSR_STR
+       "Make this router a Candidate BSR\n"
+       "BSR Priority (higher wins)\n"
+       "BSR Priority (higher wins)\n"
+       "Specify IP address for BSR operation\n"
+       "Local address to use\n"
+       "Local address to use\n"
+       "Interface to pick address from\n"
+       "Interface to pick address from\n"
+       "Pick highest loopback address (default)\n"
+       "Pick highest address from any interface\n")
+{
+	return pim_process_bsr_candidate_cmd(vty, FRR_PIM_CAND_BSR_XPATH, no,
+					     false, any, ifname, address_str,
+					     priority_str, NULL);
+}
+
+DEFPY (pim_bsr_candidate_rp,
+       pim_bsr_candidate_rp_cmd,
+       "[no] bsr candidate-rp [{priority (0-255)|interval (1-4294967295)|source <address A.B.C.D|interface IFNAME|loopback$loopback|any$any>}]",
+       NO_STR
+       BSR_STR
+       "Make this router a Candidate RP\n"
+       "RP Priority (lower wins)\n"
+       "RP Priority (lower wins)\n"
+       "Advertisement interval (seconds)\n"
+       "Advertisement interval (seconds)\n"
+       "Specify IP address for RP operation\n"
+       "Local address to use\n"
+       "Local address to use\n"
+       "Interface to pick address from\n"
+       "Interface to pick address from\n"
+       "Pick highest loopback address (default)\n"
+       "Pick highest address from any interface\n")
+{
+	return pim_process_bsr_candidate_cmd(vty, FRR_PIM_CAND_RP_XPATH, no,
+					     true, any, ifname, address_str,
+					     priority_str, interval_str);
+}
+
+DEFPY (pim_bsr_candidate_rp_group,
+       pim_bsr_candidate_rp_group_cmd,
+       "[no] bsr candidate-rp group A.B.C.D/M",
+       NO_STR
+       BSR_STR
+       "Make this router a Candidate RP\n"
+       "Configure groups to become candidate RP for (At least one group must be configured)\n"
+       "Multicast group prefix\n")
+{
+	return pim_process_bsr_crp_grp_cmd(vty, group_str, no);
+}
+
 DEFPY (pim_ssm_prefix_list,
        pim_ssm_prefix_list_cmd,
        "ssm prefix-list PREFIXLIST4_NAME$plist",
@@ -4924,71 +5392,47 @@ DEFUN (interface_no_ip_igmp,
 				    "frr-routing:ipv4");
 }
 
-DEFUN (interface_ip_igmp_join,
-       interface_ip_igmp_join_cmd,
-       "ip igmp join A.B.C.D [A.B.C.D]",
-       IP_STR
-       IFACE_IGMP_STR
-       "IGMP join multicast group\n"
-       "Multicast group address\n"
-       "Source address\n")
+DEFPY_YANG_HIDDEN (interface_ip_igmp_join,
+                   interface_ip_igmp_join_cmd,
+                   "[no] ip igmp join A.B.C.D$grp [A.B.C.D]$src",
+                   NO_STR
+                   IP_STR
+                   IFACE_IGMP_STR
+                   "IGMP join multicast group\n"
+                   "Multicast group address\n"
+                   "Source address\n")
 {
-	int idx_group = 3;
-	int idx_source = 4;
-	const char *source_str;
-	char xpath[XPATH_MAXLEN];
-
-	if (argc == 5) {
-		source_str = argv[idx_source]->arg;
-
-		if (strcmp(source_str, "0.0.0.0") == 0) {
-			vty_out(vty, "Bad source address %s\n",
-				argv[idx_source]->arg);
-			return CMD_WARNING_CONFIG_FAILED;
-		}
-	} else
-		source_str = "0.0.0.0";
-
-	snprintf(xpath, sizeof(xpath), FRR_GMP_JOIN_XPATH,
-		 "frr-routing:ipv4", argv[idx_group]->arg, source_str);
-
-	nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, NULL);
-
-	return nb_cli_apply_changes(vty, NULL);
+	nb_cli_enqueue_change(vty, ".", (!no ? NB_OP_CREATE : NB_OP_DESTROY),
+			      NULL);
+	return nb_cli_apply_changes(vty, FRR_GMP_JOIN_GROUP_XPATH,
+				    "frr-routing:ipv4", grp_str,
+				    (src_str ? src_str : "0.0.0.0"));
 }
+ALIAS(interface_ip_igmp_join,
+      interface_ip_igmp_join_group_cmd,
+      "[no] ip igmp join-group A.B.C.D$grp [A.B.C.D]$src",
+      NO_STR
+      IP_STR
+      IFACE_IGMP_STR
+      "IGMP join multicast group\n"
+      "Multicast group address\n"
+      "Source address\n");
 
-DEFUN (interface_no_ip_igmp_join,
-       interface_no_ip_igmp_join_cmd,
-       "no ip igmp join A.B.C.D [A.B.C.D]",
-       NO_STR
-       IP_STR
-       IFACE_IGMP_STR
-       "IGMP join multicast group\n"
-       "Multicast group address\n"
-       "Source address\n")
+DEFPY_YANG (interface_ip_igmp_static_group,
+            interface_ip_igmp_static_group_cmd,
+            "[no] ip igmp static-group A.B.C.D$grp [A.B.C.D]$src",
+            NO_STR
+            IP_STR
+            IFACE_IGMP_STR
+            "Static multicast group\n"
+            "Multicast group address\n"
+            "Source address\n")
 {
-	int idx_group = 4;
-	int idx_source = 5;
-	const char *source_str;
-	char xpath[XPATH_MAXLEN];
-
-	if (argc == 6) {
-		source_str = argv[idx_source]->arg;
-
-		if (strcmp(source_str, "0.0.0.0") == 0) {
-			vty_out(vty, "Bad source address %s\n",
-				argv[idx_source]->arg);
-			return CMD_WARNING_CONFIG_FAILED;
-		}
-	} else
-		source_str = "0.0.0.0";
-
-	snprintf(xpath, sizeof(xpath), FRR_GMP_JOIN_XPATH,
-		 "frr-routing:ipv4", argv[idx_group]->arg, source_str);
-
-	nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
-
-	return nb_cli_apply_changes(vty, NULL);
+	nb_cli_enqueue_change(vty, ".", (!no ? NB_OP_CREATE : NB_OP_DESTROY),
+			      NULL);
+	return nb_cli_apply_changes(vty, FRR_GMP_STATIC_GROUP_XPATH,
+				    "frr-routing:ipv4", grp_str,
+				    (src_str ? src_str : "0.0.0.0"));
 }
 
 DEFUN (interface_ip_igmp_query_interval,
@@ -5484,6 +5928,18 @@ DEFUN (interface_no_ip_pim_hello,
 {
 	return pim_process_no_ip_pim_hello_cmd(vty);
 }
+
+DEFPY (interface_ip_igmp_proxy,
+       interface_ip_igmp_proxy_cmd,
+       "[no] ip igmp proxy",
+       NO_STR
+       IP_STR
+       IGMP_STR
+       "Proxy IGMP join/prune operations\n")
+{
+	return pim_process_ip_gmp_proxy_cmd(vty, !no);
+}
+
 
 DEFUN (debug_igmp,
        debug_igmp_cmd,
@@ -6033,6 +6489,29 @@ DEFUN (no_debug_bsm,
        DEBUG_PIM_BSM_STR)
 {
 	PIM_DONT_DEBUG_BSM;
+	return CMD_SUCCESS;
+}
+
+DEFUN (debug_autorp,
+       debug_autorp_cmd,
+       "debug pim autorp",
+       DEBUG_STR
+       DEBUG_PIM_STR
+       DEBUG_PIM_AUTORP_STR)
+{
+	PIM_DO_DEBUG_AUTORP;
+	return CMD_SUCCESS;
+}
+
+DEFUN (no_debug_autorp,
+       no_debug_autorp_cmd,
+       "no debug pim autorp",
+       NO_STR
+       DEBUG_STR
+       DEBUG_PIM_STR
+       DEBUG_PIM_AUTORP_STR)
+{
+	PIM_DONT_DEBUG_AUTORP;
 	return CMD_SUCCESS;
 }
 
@@ -8373,6 +8852,9 @@ void pim_cmd_init(void)
 	install_element(PIM_NODE, &no_pim_rp_cmd);
 	install_element(PIM_NODE, &pim_rp_prefix_list_cmd);
 	install_element(PIM_NODE, &no_pim_rp_prefix_list_cmd);
+	install_element(PIM_NODE, &pim_autorp_discovery_cmd);
+	install_element(PIM_NODE, &pim_autorp_announce_rp_cmd);
+	install_element(PIM_NODE, &pim_autorp_announce_scope_int_cmd);
 	install_element(PIM_NODE, &no_pim_ssm_prefix_list_cmd);
 	install_element(PIM_NODE, &no_pim_ssm_prefix_list_name_cmd);
 	install_element(PIM_NODE, &pim_ssm_prefix_list_cmd);
@@ -8417,10 +8899,15 @@ void pim_cmd_init(void)
 	install_element(PIM_NODE, &no_pim_msdp_mesh_group_source_cmd);
 	install_element(PIM_NODE, &no_pim_msdp_mesh_group_cmd);
 
+	install_element(PIM_NODE, &pim_bsr_candidate_rp_cmd);
+	install_element(PIM_NODE, &pim_bsr_candidate_rp_group_cmd);
+	install_element(PIM_NODE, &pim_bsr_candidate_bsr_cmd);
+
 	install_element(INTERFACE_NODE, &interface_ip_igmp_cmd);
 	install_element(INTERFACE_NODE, &interface_no_ip_igmp_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_igmp_join_cmd);
-	install_element(INTERFACE_NODE, &interface_no_ip_igmp_join_cmd);
+	install_element(INTERFACE_NODE, &interface_ip_igmp_join_group_cmd);
+	install_element(INTERFACE_NODE, &interface_ip_igmp_static_group_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_igmp_version_cmd);
 	install_element(INTERFACE_NODE, &interface_no_ip_igmp_version_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_igmp_query_interval_cmd);
@@ -8442,6 +8929,7 @@ void pim_cmd_init(void)
 			&interface_ip_igmp_last_member_query_interval_cmd);
 	install_element(INTERFACE_NODE,
 			&interface_no_ip_igmp_last_member_query_interval_cmd);
+	install_element(INTERFACE_NODE, &interface_ip_igmp_proxy_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_pim_activeactive_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_pim_ssm_cmd);
 	install_element(INTERFACE_NODE, &interface_no_ip_pim_ssm_cmd);
@@ -8480,7 +8968,13 @@ void pim_cmd_init(void)
 	install_element(VIEW_NODE, &show_ip_igmp_interface_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_interface_vrf_all_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_join_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_join_group_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_join_vrf_all_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_join_group_vrf_all_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_static_group_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_static_group_vrf_all_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_proxy_cmd);
+	install_element(VIEW_NODE, &show_ip_igmp_proxy_vrf_all_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_groups_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_groups_vrf_all_cmd);
 	install_element(VIEW_NODE, &show_ip_igmp_groups_retransmissions_cmd);
@@ -8515,6 +9009,8 @@ void pim_cmd_init(void)
 	install_element(VIEW_NODE, &show_ip_pim_upstream_rpf_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_rp_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_rp_vrf_all_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_autorp_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_autorp_vrf_all_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_bsr_cmd);
 	install_element(VIEW_NODE, &show_ip_multicast_cmd);
 	install_element(VIEW_NODE, &show_ip_multicast_vrf_all_cmd);
@@ -8532,6 +9028,11 @@ void pim_cmd_init(void)
 	install_element(VIEW_NODE, &show_ip_pim_nexthop_lookup_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_bsrp_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_bsm_db_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_bsr_rpinfo_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_bsr_cand_bsr_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_bsr_cand_rp_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_bsr_rpdb_cmd);
+	install_element(VIEW_NODE, &show_ip_pim_bsr_groups_cmd);
 	install_element(VIEW_NODE, &show_ip_pim_statistics_cmd);
 	install_element(VIEW_NODE, &show_ip_msdp_peer_detail_cmd);
 	install_element(VIEW_NODE, &show_ip_msdp_peer_detail_vrf_all_cmd);
@@ -8617,6 +9118,8 @@ void pim_cmd_init(void)
 	install_element(CONFIG_NODE, &debug_pim_trace_detail_cmd);
 	install_element(ENABLE_NODE, &debug_ssmpingd_cmd);
 	install_element(CONFIG_NODE, &debug_ssmpingd_cmd);
+	install_element(ENABLE_NODE, &debug_autorp_cmd);
+	install_element(ENABLE_NODE, &no_debug_autorp_cmd);
 	install_element(ENABLE_NODE, &no_debug_ssmpingd_cmd);
 	install_element(CONFIG_NODE, &no_debug_ssmpingd_cmd);
 	install_element(ENABLE_NODE, &debug_pim_zebra_cmd);
@@ -8649,6 +9152,8 @@ void pim_cmd_init(void)
 	install_element(CONFIG_NODE, &debug_bsm_cmd);
 	install_element(ENABLE_NODE, &no_debug_bsm_cmd);
 	install_element(CONFIG_NODE, &no_debug_bsm_cmd);
+	install_element(CONFIG_NODE, &debug_autorp_cmd);
+	install_element(CONFIG_NODE, &no_debug_autorp_cmd);
 
 	install_element(CONFIG_NODE, &ip_igmp_group_watermark_cmd);
 	install_element(VRF_NODE, &ip_igmp_group_watermark_cmd);

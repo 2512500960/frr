@@ -439,7 +439,9 @@ static void rpki_delete_all_cache_nodes(struct rpki_vrf *rpki_vrf)
 
 	for (ALL_LIST_ELEMENTS(rpki_vrf->cache_list, cache_node, cache_next,
 			       cache)) {
-		rtr_mgr_remove_group(rpki_vrf->rtr_config, cache->preference);
+		if (is_running(rpki_vrf))
+			rtr_mgr_remove_group(rpki_vrf->rtr_config,
+					     cache->preference);
 		listnode_delete(rpki_vrf->cache_list, cache);
 	}
 }
@@ -664,7 +666,7 @@ static void revalidate_bgp_node(struct bgp_dest *bgp_dest, afi_t afi,
 		struct bgp_path_info *path =
 			bgp_dest_get_bgp_path_info(bgp_dest);
 
-		num_labels = bgp_path_info_num_labels(path);
+		num_labels = BGP_PATH_INFO_NUM_LABELS(path);
 		label = num_labels ? path->extra->labels->label : NULL;
 
 		(void)bgp_update(ain->peer, bgp_dest_get_prefix(bgp_dest),
@@ -1918,81 +1920,6 @@ DEFUN (no_rpki_retry_interval,
 	return CMD_SUCCESS;
 }
 
-#if CONFDATE > 20240916
-CPP_NOTICE("Remove rpki_cache_cmd")
-#endif
-DEFPY(rpki_cache, rpki_cache_cmd,
-      "rpki cache <A.B.C.D|WORD> <TCPPORT|(1-65535)$sshport SSH_UNAME SSH_PRIVKEY [KNOWN_HOSTS_PATH]> [source <A.B.C.D>$bindaddr] preference (1-255)",
-      RPKI_OUTPUT_STRING
-      "Install a cache server to current group\n"
-      "IP address of cache server\n"
-      "Hostname of cache server\n"
-      "TCP port number\n"
-      "SSH port number\n"
-      "SSH user name\n"
-      "Path to own SSH private key\n"
-      "Path to the known hosts file\n"
-      "Configure source IP address of RPKI connection\n"
-      "Define a Source IP Address\n"
-      "Preference of the cache server\n"
-      "Preference value\n")
-{
-	int return_value;
-	struct listnode *cache_node;
-	struct cache *current_cache;
-	struct rpki_vrf *rpki_vrf;
-	bool init;
-
-	if (vty->node == RPKI_VRF_NODE)
-		rpki_vrf = VTY_GET_CONTEXT_SUB(rpki_vrf);
-	else
-		rpki_vrf = VTY_GET_CONTEXT(rpki_vrf);
-
-	if (!rpki_vrf)
-		return CMD_WARNING_CONFIG_FAILED;
-
-	if (!rpki_vrf || !rpki_vrf->cache_list)
-		return CMD_WARNING;
-
-	init = !!list_isempty(rpki_vrf->cache_list);
-
-	for (ALL_LIST_ELEMENTS_RO(rpki_vrf->cache_list, cache_node,
-				  current_cache)) {
-		if (current_cache->preference == preference) {
-			vty_out(vty,
-				"Cache with preference %ld is already configured\n",
-				preference);
-			return CMD_WARNING;
-		}
-	}
-
-	// use ssh connection
-	if (ssh_uname) {
-#if defined(FOUND_SSH)
-		return_value = add_ssh_cache(rpki_vrf, cache, sshport, ssh_uname,
-					     ssh_privkey, known_hosts_path,
-					     preference, bindaddr_str);
-#else
-		return_value = SUCCESS;
-		vty_out(vty,
-			"ssh sockets are not supported. Please recompile rtrlib and frr with ssh support. If you want to use it\n");
-#endif
-	} else { // use tcp connection
-		return_value = add_tcp_cache(rpki_vrf, cache, tcpport,
-					     preference, bindaddr_str);
-	}
-
-	if (return_value == ERROR) {
-		vty_out(vty, "Could not create new rpki cache\n");
-		return CMD_WARNING;
-	}
-
-	if (init)
-		start(rpki_vrf);
-
-	return CMD_SUCCESS;
-}
-
 DEFPY(rpki_cache_tcp, rpki_cache_tcp_cmd,
       "rpki cache tcp <A.B.C.D|WORD>$cache TCPPORT [source <A.B.C.D>$bindaddr] preference (1-255)",
       RPKI_OUTPUT_STRING
@@ -2818,7 +2745,6 @@ static void install_cli_commands(void)
 	/* Install rpki cache commands */
 	install_element(RPKI_NODE, &rpki_cache_tcp_cmd);
 	install_element(RPKI_NODE, &rpki_cache_ssh_cmd);
-	install_element(RPKI_NODE, &rpki_cache_cmd);
 	install_element(RPKI_NODE, &no_rpki_cache_cmd);
 
 	/* RPKI_VRF_NODE commands */
@@ -2842,7 +2768,6 @@ static void install_cli_commands(void)
 	/* Install rpki cache commands */
 	install_element(RPKI_VRF_NODE, &rpki_cache_tcp_cmd);
 	install_element(RPKI_VRF_NODE, &rpki_cache_ssh_cmd);
-	install_element(RPKI_VRF_NODE, &rpki_cache_cmd);
 	install_element(RPKI_VRF_NODE, &no_rpki_cache_cmd);
 
 	/* Install show commands */

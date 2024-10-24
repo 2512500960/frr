@@ -508,9 +508,6 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 				gnh_modified = 1;
 			}
 		} else if (IN6_IS_ADDR_UNSPECIFIED(&v6nhglobal)) {
-			/* the UPDATE is originating from the local router.
-			 * Build the global nexthop.
-			 */
 			mod_v6nhg = &peer->nexthop.v6_global;
 			gnh_modified = 1;
 		} else if ((peer->sort == BGP_PEER_EBGP)
@@ -524,32 +521,16 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 			 */
 			mod_v6nhg = &peer->nexthop.v6_global;
 			gnh_modified = 1;
-		} else if (IS_MAPPED_IPV6(&v6nhglobal) &&
-			   !IN6_IS_ADDR_LINKLOCAL(&peer->nexthop.v6_global)) {
-			/* prefer a IPv6 native global address over
-			 * an IPv4-mapped IPv6 address as nexthop when
-			 * forwarding UPDATEs.
-			 */
-			mod_v6nhg = &peer->nexthop.v6_global;
-			gnh_modified = 1;
 		}
 
-		if (peer->nexthop.v4.s_addr != INADDR_ANY &&
-		    (IN6_IS_ADDR_UNSPECIFIED(mod_v6nhg) ||
-		     (IN6_IS_ADDR_LINKLOCAL(mod_v6nhg) &&
-		      ((peer->connection->su.sa.sa_family == AF_INET6 &&
-			paf->afi == AFI_IP) ||
-		       (peer->connection->su.sa.sa_family == AF_INET &&
-			paf->afi == AFI_IP6))))) {
-			ipv4_to_ipv4_mapped_ipv6(mod_v6nhg, peer->nexthop.v4);
-			gnh_modified = 1;
+		if (IN6_IS_ADDR_UNSPECIFIED(mod_v6nhg)) {
+			if (peer->nexthop.v4.s_addr != INADDR_ANY) {
+				ipv4_to_ipv4_mapped_ipv6(mod_v6nhg,
+							 peer->nexthop.v4);
+			}
 		}
 
 		if (IS_MAPPED_IPV6(&peer->nexthop.v6_global)) {
-			/* If the interface to the peer has no global IPv6
-			 * address, replace the nexthop in UPDATE with
-			 * the IPv4-mapped IPv6 address if any.
-			 */
 			mod_v6nhg = &peer->nexthop.v6_global;
 			gnh_modified = 1;
 		}
@@ -757,9 +738,9 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 
 			/* 5: Encode all the attributes, except MP_REACH_NLRI
 			 * attr. */
-			total_attr_len = bgp_packet_attribute(
-				NULL, peer, s, adv->baa->attr, &vecarr, NULL,
-				afi, safi, from, NULL, NULL, 0, 0, 0, path);
+			total_attr_len = bgp_packet_attribute(NULL, peer, s, adv->baa->attr,
+							      &vecarr, NULL, afi, safi, from, NULL,
+							      NULL, 0, 0, 0);
 
 			space_remaining =
 				STREAM_CONCAT_REMAIN(s, snlri, STREAM_SIZE(s))
@@ -832,7 +813,7 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 				label_pnt = &label;
 				num_labels = 1;
 			} else {
-				num_labels = bgp_path_info_num_labels(path);
+				num_labels = BGP_PATH_INFO_NUM_LABELS(path);
 				label_pnt =
 					num_labels
 						? &path->extra->labels->label[0]
@@ -1168,12 +1149,9 @@ void subgroup_default_update_packet(struct update_subgroup *subgrp,
 	/* Make place for total attribute length.  */
 	pos = stream_get_endp(s);
 	stream_putw(s, 0);
-	total_attr_len =
-		bgp_packet_attribute(NULL, peer, s, attr, &vecarr, &p, afi,
-				     safi, from, NULL, &label, num_labels,
-				     addpath_capable,
-				     BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE,
-				     NULL);
+	total_attr_len = bgp_packet_attribute(NULL, peer, s, attr, &vecarr, &p, afi, safi, from,
+					      NULL, &label, num_labels, addpath_capable,
+					      BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
 
 	/* Set Total Path Attribute Length. */
 	stream_putw_at(s, pos, total_attr_len);
