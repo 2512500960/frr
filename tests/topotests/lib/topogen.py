@@ -833,6 +833,8 @@ class TopoRouter(TopoGear):
         Loads the unified configuration file source
         Start the daemons in the list
         If daemons is None, try to infer daemons from the config file
+        `daemons` is a tuple (daemon, param) of daemons to start, e.g.:
+        (TopoRouter.RD_ZEBRA, "-s 90000000").
         """
         source_path = self.load_config(self.RD_FRR, source)
         if not daemons:
@@ -849,8 +851,9 @@ class TopoRouter(TopoGear):
                 if result:
                     self.load_config(daemon, "")
         else:
-            for daemon in daemons:
-                self.load_config(daemon, "")
+            for item in daemons:
+                daemon, param = item
+                self.load_config(daemon, "", param)
 
     def load_config(self, daemon, source=None, param=None):
         """Loads daemon configuration from the specified source
@@ -1273,16 +1276,24 @@ class TopoBMPCollector(TopoHost):
         return gear
 
     def start(self, log_file=None):
+        log_dir = os.path.join(self.logdir, self.name)
+        self.run("chmod 777 {}".format(log_dir))
+
+        log_err = os.path.join(log_dir, "bmpserver.log")
+
         log_arg = "-l {}".format(log_file) if log_file else ""
-        self.run(
-            "{}/bmp_collector/bmpserver -a {} -p {} {}&".format(
-                CWD, self.ip, self.port, log_arg
-            ),
-            stdout=None,
-        )
+
+        with open(log_err, "w") as err:
+            self.run(
+                "{}/bmp_collector/bmpserver -a {} -p {} {}&".format(
+                    CWD, self.ip, self.port, log_arg
+                ),
+                stdout=None,
+                stderr=err,
+            )
 
     def stop(self):
-        self.run("pkill -9 -f bmpserver")
+        self.run("pkill -f bmpserver")
         return ""
 
 

@@ -160,15 +160,15 @@ bottom until one of the factors can be used.
 
    Prefer higher local preference routes to lower.
 
+3. **Local route check**
+
+   Prefer local routes (statics, aggregates, redistributed) to received routes.
+
    If ``bgp bestpath aigp`` is enabled, and both paths that are compared have
    AIGP attribute, BGP uses AIGP tie-breaking unless both of the paths have the
    AIGP metric attribute. This means that the AIGP attribute is not evaluated
    during the best path selection process between two paths when one path does
    not have the AIGP attribute.
-
-3. **Local route check**
-
-   Prefer local routes (statics, aggregates, redistributed) to received routes.
 
 4. **AS path length check**
 
@@ -1289,6 +1289,13 @@ IPv6 Support
    Using the ``bgp default ipv6-unicast`` configuration, IPv6 unicast
    address family is enabled by default for all new neighbors.
 
+
+.. clicmd:: bgp ipv6-auto-ra
+
+   By default, bgpd can ask Zebra to enable sending IPv6 router advertisement
+   messages on interfaces. For example, this happens for unnumbered peers
+   support or when extended-nexthop capability is used. The ``no`` form of this
+   command disables such behaviour.
 
 .. _bgp-route-aggregation:
 
