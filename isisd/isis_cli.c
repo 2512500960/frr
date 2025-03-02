@@ -626,10 +626,17 @@ DEFPY_YANG(domain_passwd, domain_passwd_cmd,
 }
 
 DEFPY_YANG(no_area_passwd, no_area_passwd_cmd,
-      "no <area-password|domain-password>$cmd",
+      "no <area-password|domain-password>$cmd [<clear|md5>$pwd_type WORD$pwd [authenticate snp <send-only|validate>$snp]]",
       NO_STR
       "Configure the authentication password for an area\n"
-      "Set the authentication password for a routing domain\n")
+      "Set the authentication password for a routing domain\n"
+      "Clear-text authentication type\n"
+      "MD5 authentication type\n"
+      "Level-wide password\n"
+      "Authentication\n"
+      "SNP PDUs\n"
+      "Send but do not check PDUs on receiving\n"
+      "Send and check PDUs on receiving\n")
 {
 	nb_cli_enqueue_change(vty, ".", NB_OP_DESTROY, NULL);
 
@@ -2170,12 +2177,6 @@ void cli_show_isis_srv6_locator(struct vty *vty, const struct lyd_node *dnode,
 	vty_out(vty, "  locator %s\n", yang_dnode_get_string(dnode, NULL));
 }
 
-void cli_show_isis_srv6_locator_end(struct vty *vty,
-				    const struct lyd_node *dnode)
-{
-	vty_out(vty, " exit\n");
-}
-
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/enabled
  */
@@ -2221,6 +2222,11 @@ void cli_show_isis_srv6_enabled(struct vty *vty, const struct lyd_node *dnode,
 		vty_out(vty, " no");
 
 	vty_out(vty, " segment-routing srv6\n");
+}
+
+void cli_show_isis_srv6_end(struct vty *vty, const struct lyd_node *dnode)
+{
+	vty_out(vty, " exit\n");
 }
 
 /*
@@ -2353,6 +2359,11 @@ void cli_show_isis_srv6_node_msd(struct vty *vty, const struct lyd_node *dnode,
 			yang_dnode_get_uint8(dnode, "max-end-d"));
 }
 
+void cli_show_isis_srv6_node_msd_end(struct vty *vty, const struct lyd_node *dnode)
+{
+	vty_out(vty, "  exit\n");
+}
+
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/interface
  */
@@ -2459,31 +2470,27 @@ DEFPY_YANG (isis_frr_lfa_tiebreaker,
 
 	if (!level || strmatch(level, "level-1")) {
 		if (no) {
-			snprintf(
-				xpath, XPATH_MAXLEN,
-				"./fast-reroute/level-1/lfa/tiebreaker[index='%s']",
-				index_str);
+			snprintf(xpath, XPATH_MAXLEN,
+				 "./fast-reroute/level-1/lfa/tiebreaker[index='%s'][type='%s']",
+				 index_str, type);
 			nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
 		} else {
-			snprintf(
-				xpath, XPATH_MAXLEN,
-				"./fast-reroute/level-1/lfa/tiebreaker[index='%s']/type",
-				index_str);
+			snprintf(xpath, XPATH_MAXLEN,
+				 "./fast-reroute/level-1/lfa/tiebreaker[index='%s'][type='%s']/type",
+				 index_str, type);
 			nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, type);
 		}
 	}
 	if (!level || strmatch(level, "level-2")) {
 		if (no) {
-			snprintf(
-				xpath, XPATH_MAXLEN,
-				"./fast-reroute/level-2/lfa/tiebreaker[index='%s']",
-				index_str);
+			snprintf(xpath, XPATH_MAXLEN,
+				 "./fast-reroute/level-2/lfa/tiebreaker[index='%s'][type='%s']",
+				 index_str, type);
 			nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
 		} else {
-			snprintf(
-				xpath, XPATH_MAXLEN,
-				"./fast-reroute/level-2/lfa/tiebreaker[index='%s']/type",
-				index_str);
+			snprintf(xpath, XPATH_MAXLEN,
+				 "./fast-reroute/level-2/lfa/tiebreaker[index='%s'][type='%s']/type",
+				 index_str, type);
 			nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, type);
 		}
 	}

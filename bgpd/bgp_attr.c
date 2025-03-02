@@ -2450,6 +2450,9 @@ int bgp_mp_reach_parse(struct bgp_attr_parser_args *args,
 			if (!peer->nexthop.ifp) {
 				zlog_warn("%s sent a v6 global attribute but address is a V6 LL and there's no peer interface information. Hence, withdrawing",
 					  peer->host);
+				if (PEER_HAS_LINK_LOCAL_CAPABILITY(peer))
+					bgp_notify_send(peer->connection, BGP_NOTIFY_UPDATE_ERR,
+							BGP_NOTIFY_UPDATE_UNREACH_NEXT_HOP);
 				return BGP_ATTR_PARSE_WITHDRAW;
 			}
 			attr->nh_ifindex = peer->nexthop.ifp->ifindex;
@@ -4211,8 +4214,10 @@ size_t bgp_packet_mpattr_start(struct stream *s, struct peer *peer, afi_t afi,
 					   IPV6_MAX_BYTELEN);
 			} else {
 				stream_putc(s, IPV6_MAX_BYTELEN);
-				stream_put(s, &attr->mp_nexthop_global,
-					   IPV6_MAX_BYTELEN);
+				if (PEER_HAS_LINK_LOCAL_CAPABILITY(peer))
+					stream_put(s, &attr->mp_nexthop_local, IPV6_MAX_BYTELEN);
+				else
+					stream_put(s, &attr->mp_nexthop_global, IPV6_MAX_BYTELEN);
 			}
 		} break;
 		case SAFI_MPLS_VPN: {
@@ -5406,7 +5411,14 @@ enum bgp_attr_parse_ret bgp_attr_ignore(struct peer *peer, uint8_t type)
 			   lookup_msg(attr_str, type, NULL),
 			   withdraw ? "treat-as-withdraw" : "discard");
 
-	return withdraw ? BGP_ATTR_PARSE_WITHDRAW : BGP_ATTR_PARSE_PROCEED;
+	/* We don't increment stat_pfx_withdraw here, because it's done in
+	 * bgp_update_receive().
+	 */
+	if (withdraw)
+		return BGP_ATTR_PARSE_WITHDRAW;
+
+	peer->stat_pfx_discard++;
+	return BGP_ATTR_PARSE_PROCEED;
 }
 
 bool route_matches_soo(struct bgp_path_info *pi, struct ecommunity *soo)

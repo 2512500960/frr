@@ -323,7 +323,6 @@ struct attr {
 /* rmap_change_flags definition */
 #define BATTR_RMAP_IPV4_NHOP_CHANGED (1 << 0)
 #define BATTR_RMAP_NEXTHOP_PEER_ADDRESS (1 << 1)
-#define BATTR_REFLECTED (1 << 2)
 #define BATTR_RMAP_NEXTHOP_UNCHANGED (1 << 3)
 #define BATTR_RMAP_IPV6_GLOBAL_NHOP_CHANGED (1 << 4)
 #define BATTR_RMAP_IPV6_LL_NHOP_CHANGED (1 << 5)
@@ -604,10 +603,11 @@ static inline uint64_t bgp_aigp_metric_total(struct bgp_path_info *bpi)
 {
 	uint64_t aigp = bgp_attr_get_aigp_metric(bpi->attr);
 
-	if (bpi->nexthop)
-		return aigp + bpi->nexthop->metric;
-	else
+	/* Don't increment if it's locally sourced */
+	if (bpi->peer == bpi->peer->bgp->peer_self)
 		return aigp;
+
+	return bpi->extra ? (aigp + bpi->extra->igpmetric) : aigp;
 }
 
 static inline void bgp_attr_set_med(struct attr *attr, uint32_t med)

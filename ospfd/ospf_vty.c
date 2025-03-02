@@ -339,6 +339,12 @@ DEFPY (no_ospf_router_id,
 	return CMD_SUCCESS;
 }
 
+ALIAS_HIDDEN (no_ospf_router_id,
+              no_router_id_cmd,
+              "no router-id [A.B.C.D]",
+              NO_STR
+              "router-id for the OSPF process\n"
+              "OSPF router-id in IP address format\n")
 
 static void ospf_passive_interface_default_update(struct ospf *ospf,
 						  uint8_t newval)
@@ -7341,6 +7347,9 @@ DEFPY (show_ip_ospf_database,
 	struct in_addr *adv_router_p = NULL;
 	json_object *json = NULL;
 
+	if (instance_id != ospf_instance)
+		return CMD_NOT_MY_INSTANCE;
+
 	if (uj)
 		json = json_object_new_object();
 	if (lsid_str)
@@ -10249,8 +10258,10 @@ DEFUN (ospf_external_route_aggregation,
 		tag = strtoul(argv[idx + 2]->arg, NULL, 10);
 
 	ret = ospf_asbr_external_aggregator_set(ospf, &p, tag);
-	if (ret == OSPF_INVALID)
-		vty_out(vty, "Invalid configuration!!\n");
+	if (ret == OSPF_FAILURE) {
+		vty_out(vty, "%% Failed to set summary-address!\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
 
 	return CMD_SUCCESS;
 }
@@ -10602,8 +10613,10 @@ DEFUN (ospf_external_route_aggregation_no_adrvertise,
 	}
 
 	ret = ospf_asbr_external_rt_no_advertise(ospf, &p);
-	if (ret == OSPF_INVALID)
-		vty_out(vty, "Invalid configuration!!\n");
+	if (ret == OSPF_FAILURE) {
+		vty_out(vty, "%% Failed to set summary-address!\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
 
 	return CMD_SUCCESS;
 }
@@ -13603,6 +13616,7 @@ void ospf_vty_init(void)
 	install_element(OSPF_NODE, &ospf_router_id_cmd);
 	install_element(OSPF_NODE, &ospf_router_id_old_cmd);
 	install_element(OSPF_NODE, &no_ospf_router_id_cmd);
+	install_element(OSPF_NODE, &no_router_id_cmd);
 
 	/* "passive-interface" commands. */
 	install_element(OSPF_NODE, &ospf_passive_interface_default_cmd);

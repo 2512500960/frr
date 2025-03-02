@@ -282,7 +282,9 @@ internal or external.
    interface and address information. In that case default router ID value is
    selected as the largest IP Address of the interfaces. When `router zebra` is
    not enabled *bgpd* can't get interface information so `router-id` is set to
-   0.0.0.0. So please set router-id by hand.
+   0.0.0.0, which is invalid and BGP session can't be established.
+
+   So please set router-id by manually.
 
 
 .. _bgp-multiple-autonomous-systems:
@@ -1803,7 +1805,7 @@ Configuring Peers
    Send the extended RPKI communities to the peer. RPKI extended community
    can be send only to iBGP and eBGP-OAD peers.
 
-   Default: enabled.
+   Default: disabled.
 
 .. clicmd:: neighbor PEER weight WEIGHT
 
@@ -1950,6 +1952,16 @@ Configuring Peers
    fqdn`` avoid negotiation of that capability. This is useful for peers who
    are not supporting this capability or supporting BGP Capabilities
    Negotiation RFC 2842.
+
+.. clicmd:: neighbor PEER capability link-local
+
+   Send the Link-Local Next Hop capability in the BGP OPEN message to the neighbor.
+   This is useful in data center environments where point-to-point (unnumbered) links
+   are utilized. This capability standardizes the operation of BGP over a
+   point-to-point links using link-local IPv6 addressing only.
+
+   Enabled by default for the ``datacenter`` profile. Also implicitly enabled
+   for unnumbered peers.
 
 .. clicmd:: neighbor <A.B.C.D|X:X::X:X|WORD> accept-own
 
@@ -2693,6 +2705,12 @@ The following commands can be used in route maps:
    happen only when BGP updates have completely same communities value
    specified in the community list.
 
+.. clicmd:: match community-limit (0-65535)
+
+   This command matches BGP updates that use community list, and with a community
+   list count less or equal than the defined limit. Setting community-limit to 0
+   will only match BGP updates with no community.
+
 .. clicmd:: set community <none|COMMUNITY> additive
 
    This command sets the community value in BGP updates.  If the attribute is
@@ -2900,7 +2918,22 @@ Extended Community Lists
 BGP Extended Communities in Route Map
 """""""""""""""""""""""""""""""""""""
 
-.. clicmd:: match extcommunity WORD
+.. clicmd:: match extcommunity WORD [exact-match|any]
+
+   This command perform match to BGP updates using extended community list WORD.
+   When the one of BGP extended communities value match to the one of the extended
+   communities value in community list, it is match. When ``exact-match`` keyword
+   is specified, match happens only when BGP updates have completely same extended
+   communities value specified in the extended community list. When ``any`` keyword
+   is set, match happens when any of the extended communities of the BGP updates
+   matches an extended community of the specified list.
+
+ .. clicmd:: match extcommunity-limit (0-65535)
+
+   This command matches BGP updates that use extended community list and IPv6
+   extended community list, and with an extended community list count less or
+   equal than the defined limit. Setting extended community-limit to 0 will
+   only match BGP updates with no extended community.
 
 .. clicmd:: set extcommunity none
 
@@ -2927,6 +2960,24 @@ BGP Extended Communities in Route Map
 .. clicmd:: set extcomumnity color EXTCOMMUNITY
 
    This command sets colors values.
+
+:rfc:`9256`.
+
+``CO:COLOR``
+   This is a format to define colors value. ``CO`` part is always 00 (default),
+   it can be used to support the requirements of Color-Only steering when using
+   a Null Endpoint in the SR-TE Policy as specified in Section 8.8 of [RFC9256].
+   The below shows in detail what the different combinations of ``CO`` bits can
+   match on to for the purpose of determining what type of SR-TE Policy Tunnel
+   a BGP route can resolve over, and it also shows the order for resolving the
+   BGP route if there are different tunnels.
+
+   - ``00`` Can match on a specific endpoint only which should be the nexthop
+     of the route(Default Setting).
+   - ``01`` Can match on a specific endpoint or a null endpoint.
+   - ``10`` Can match on a specific endpoint, null endpoint or any endpoint.
+   - ``11`` Reserved for future use and shuould not be used.
+
 
 .. clicmd:: set extcommunity bandwidth <(1-25600) | cumulative | num-multipaths> [non-transitive]
 
@@ -4131,6 +4182,11 @@ Debugging
 
    Enable or disable debugging of communications between *bgpd* and *zebra*.
 
+.. clicmd:: debug bgp aggregate [prefix <A.B.C.D/M|X:X::X:X/M>]
+
+   Enable or disable debugging of route aggregation, either for one or more
+   aggregate addresses or for all aggregate addresses.
+
 Dumping Messages and Routing Tables
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -4331,6 +4387,10 @@ displays IPv6 routing table.
 
    If ``detail`` option is specified after ``json``, more verbose JSON output
    will be displayed.
+
+.. clicmd:: show bgp router [json]
+
+   This command displays information related BGP router and Graceful Restart.
 
 Some other commands provide additional options for filtering the output.
 
@@ -4603,13 +4663,16 @@ incoming/outgoing directions.
 
    If ``json`` option is specified, output is displayed in JSON format.
 
-.. clicmd:: show [ip] bgp [afi] [safi] [all] detail-routes
+.. clicmd:: show [ip] bgp [afi] [safi] [all] detail-routes [internal]
 
    Display the detailed version of all routes. The same format as using
    ``show [ip] bgp [afi] [safi] PREFIX``, but for the whole BGP table.
 
    If ``all`` option is specified, ``ip`` keyword is ignored and,
    routes displayed for all AFIs and SAFIs.
+
+   ``internal`` option is used to display internal data additionally. JSON
+   output is not supported with this option.
 
    If ``afi`` is specified, with ``all`` option, routes will be displayed for
    each SAFI in the selected AFI.
