@@ -12,7 +12,6 @@
 
 #include "command.h"
 #include "prefix.h"
-#include "linklist.h"
 #include "sockunion.h"
 #include "memory.h"
 #include "queue.h"
@@ -28,6 +27,7 @@
 #include "bgpd/bgp_ecommunity.h"
 #include "bgpd/bgp_lcommunity.h"
 #include "bgpd/bgp_mpath.h"
+#include "bgpd/bgp_nhc.h"
 
 /*
  * bgp_maximum_paths_set
@@ -363,21 +363,40 @@ struct attr *bgp_path_info_mpath_attr(struct bgp_path_info *path)
  * Return if we should attempt to do weighted ECMP or not
  * The path passed in is the bestpath.
  */
-bool bgp_path_info_mpath_chkwtd(struct bgp *bgp, struct bgp_path_info *path)
+enum bgp_wecmp_behavior bgp_path_info_mpath_chkwtd(struct bgp *bgp, struct bgp_path_info *path)
 {
-	/* Check if told to ignore weights or not multipath */
-	if (bgp->lb_handling == BGP_LINK_BW_IGNORE_BW || !path->mpath)
-		return false;
+	enum bgp_wecmp_behavior default_val = BGP_WECMP_BEHAVIOR_NONE;
+
+	if (CHECK_FLAG(bgp->flags, BGP_FLAG_USE_RECURSIVE_WEIGHT))
+		default_val = BGP_WECMP_BEHAVIOR_USE_RECURSIVE_VALUE;
+
+	/* Check if not multipath */
+	if (!path->mpath)
+		return default_val;
+
+	/* If link bandwidth is to be ignored, check if we have Next-Next Hop Nodes
+	 * characteristic and do weighted ECMP based on that.
+	 */
+	if (bgp->lb_handling == BGP_LINK_BW_IGNORE_BW) {
+		if (bgp_attr_exists(path->attr, BGP_ATTR_NHC))
+			return BGP_WECMP_BEHAVIOR_NNHN_COUNT;
+	}
 
 	/* All paths in multipath should have associated weight (bandwidth)
 	 * unless told explicitly otherwise.
 	 */
 	if (bgp->lb_handling != BGP_LINK_BW_SKIP_MISSING &&
-	    bgp->lb_handling != BGP_LINK_BW_DEFWT_4_MISSING)
-		return CHECK_FLAG(path->mpath->mp_flags, BGP_MP_LB_ALL);
+	    bgp->lb_handling != BGP_LINK_BW_DEFWT_4_MISSING) {
+		if (CHECK_FLAG(path->mpath->mp_flags, BGP_MP_LB_ALL))
+			return BGP_WECMP_BEHAVIOR_LINK_BW;
+		else
+			return default_val;
+	}
 
-	/* At least one path should have bandwidth. */
-	return CHECK_FLAG(path->mpath->mp_flags, BGP_MP_LB_PRESENT);
+	if (CHECK_FLAG(path->mpath->mp_flags, BGP_MP_LB_PRESENT))
+		return BGP_WECMP_BEHAVIOR_LINK_BW;
+
+	return default_val;
 }
 
 /*
@@ -492,7 +511,7 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 			}
 
 			if (debug)
-				zlog_debug("%pBD(%s): Mpath count %u is equal to maximum paths allowed, finished comparision for MPATHS",
+				zlog_debug("%pBD(%s): Mpath count %u is equal to maximum paths allowed, finished comparison for MPATHS",
 					   dest, bgp->name_pretty, mpath_count);
 
 			break;

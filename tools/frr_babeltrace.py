@@ -57,6 +57,24 @@ def print_net_ipv4_addr(field_val):
     return str(ipaddress.IPv4Address(field_val))
 
 
+def print_net_ipv6_addr(field_val):
+    """
+    pretty print ctf_array/ctf_integer_network ipv6 (struct in6_addr)
+    """
+    if isinstance(field_val, (list, tuple)):
+        # If it's a list/tuple of bytes (from ctf_array)
+        if len(field_val) == 16:
+            ipv6_bytes = bytes(field_val)
+            return str(ipaddress.IPv6Address(ipv6_bytes))
+    else:
+        # If it's already in a format that IPv6Address can handle
+        try:
+            return str(ipaddress.IPv6Address(field_val))
+        except:
+            pass
+    return str(field_val)
+
+
 def print_esi(field_val):
     """
     pretty print ethernet segment id, esi_t
@@ -124,7 +142,7 @@ def parse_frr_bgp_evpn_mac_ip_zsend(event):
         "ip": print_ip_addr,
         "mac": print_mac,
         "esi": print_esi,
-        "vtep": print_net_ipv4_addr,
+        "vtep": print_ip_addr,
     }
 
     parse_event(event, field_parsers)
@@ -198,8 +216,7 @@ def parse_frr_bgp_evpn_mh_es_evi_vtep_add(event):
     bgp evpn remote ead evi remote vtep add; raw format -
     ctf_array(unsigned char, esi, esi, sizeof(esi_t))
     """
-    field_parsers = {"esi": print_esi,
-                     "vtep": print_net_ipv4_addr}
+    field_parsers = {"esi": print_esi, "vtep": print_net_ipv4_addr}
 
     parse_event(event, field_parsers)
 
@@ -209,8 +226,7 @@ def parse_frr_bgp_evpn_mh_es_evi_vtep_del(event):
     bgp evpn remote ead evi remote vtep del; raw format -
     ctf_array(unsigned char, esi, esi, sizeof(esi_t))
     """
-    field_parsers = {"esi": print_esi,
-                     "vtep": print_net_ipv4_addr}
+    field_parsers = {"esi": print_esi, "vtep": print_net_ipv4_addr}
 
     parse_event(event, field_parsers)
 
@@ -220,8 +236,7 @@ def parse_frr_bgp_evpn_mh_local_ead_es_evi_route_upd(event):
     bgp evpn local ead evi vtep; raw format -
     ctf_array(unsigned char, esi, esi, sizeof(esi_t))
     """
-    field_parsers = {"esi": print_esi,
-                     "vtep": print_net_ipv4_addr}
+    field_parsers = {"esi": print_esi, "vtep": print_net_ipv4_addr}
 
     parse_event(event, field_parsers)
 
@@ -231,8 +246,7 @@ def parse_frr_bgp_evpn_mh_local_ead_es_evi_route_del(event):
     bgp evpn local ead evi vtep del; raw format -
     ctf_array(unsigned char, esi, esi, sizeof(esi_t))
     """
-    field_parsers = {"esi": print_esi,
-                     "vtep": print_net_ipv4_addr}
+    field_parsers = {"esi": print_esi, "vtep": print_net_ipv4_addr}
 
     parse_event(event, field_parsers)
 
@@ -243,8 +257,7 @@ def parse_frr_bgp_evpn_local_vni_add_zrecv(event):
     ctf_integer_network_hex(unsigned int, vtep, vtep.s_addr)
     ctf_integer_network_hex(unsigned int, mc_grp, mc_grp.s_addr)
     """
-    field_parsers = {"vtep": print_net_ipv4_addr,
-                     "mc_grp": print_net_ipv4_addr}
+    field_parsers = {"vtep": print_ip_addr, "mc_grp": print_net_ipv4_addr}
 
     parse_event(event, field_parsers)
 
@@ -257,7 +270,7 @@ def parse_frr_bgp_evpn_local_l3vni_add_zrecv(event):
     ctf_array(unsigned char, vrr_rmac, vrr_rmac, sizeof(struct ethaddr))
     """
     field_parsers = {
-        "vtep": print_net_ipv4_addr,
+        "vtep": print_ip_addr,
         "svi_rmac": print_mac,
         "vrr_rmac": print_mac,
     }
@@ -272,9 +285,7 @@ def parse_frr_bgp_evpn_local_macip_add_zrecv(event):
     ctf_array(unsigned char, mac, mac, sizeof(struct ethaddr))
     ctf_array(unsigned char, esi, esi, sizeof(esi_t))
     """
-    field_parsers = {"ip": print_ip_addr,
-                     "mac": print_mac,
-                     "esi": print_esi}
+    field_parsers = {"ip": print_ip_addr, "mac": print_mac, "esi": print_esi}
 
     parse_event(event, field_parsers)
 
@@ -285,8 +296,7 @@ def parse_frr_bgp_evpn_local_macip_del_zrecv(event):
     ctf_array(unsigned char, ip, ip, sizeof(struct ipaddr))
     ctf_array(unsigned char, mac, mac, sizeof(struct ethaddr))
     """
-    field_parsers = {"ip": print_ip_addr,
-                     "mac": print_mac}
+    field_parsers = {"ip": print_ip_addr, "mac": print_mac}
 
     parse_event(event, field_parsers)
 
@@ -298,7 +308,7 @@ def parse_frr_bgp_evpn_advertise_type5(event):
     field_parsers = {
         "ip": print_ip_addr,
         "rmac": print_mac,
-        "vtep": print_net_ipv4_addr,
+        "vtep": print_ip_addr,
     }
 
     parse_event(event, field_parsers)
@@ -316,45 +326,115 @@ def parse_frr_bgp_evpn_withdraw_type5(event):
 ############################ evpn parsers - end *#############################
 
 
+def location_bgp_session_state_change(field_val):
+    locations = {
+        1: "START_TIMER_EXPIRE",
+        2: "CONNECT_TIMER_EXPIRE",
+        3: "HOLDTIME_EXPIRE",
+        4: "ROUTEADV_TIMER_EXPIRE",
+        5: "DELAY_OPEN_TIMER_EXPIRE",
+        6: "BGP_OPEN_MSG_DELAYED",
+        7: "Unable to get Nbr's IP Addr, waiting..",
+        8: "Waiting for NHT, no path to Nbr present",
+        9: "FSM_HOLDTIME_EXPIRE",
+    }
+    return locations.get(field_val, f"UNKNOWN({field_val})")
+
+
+def bgp_status_to_string(field_val):
+    statuses = {
+        1: "Idle",
+        2: "Connect",
+        3: "Active",
+        4: "OpenSent",
+        5: "OpenConfirm",
+        6: "Established",
+        7: "Clearing",
+        8: "Deleted",
+    }
+    return statuses.get(field_val, f"UNKNOWN({field_val})")
+
+
+def bgp_event_to_string(field_val):
+    events = {
+        1: "BGP_Start",
+        2: "BGP_Stop",
+        3: "TCP_connection_open",
+        4: "TCP_connection_open_w_delay",
+        5: "TCP_connection_closed",
+        6: "TCP_connection_open_failed",
+        7: "TCP_fatal_error",
+        8: "ConnectRetry_timer_expired",
+        9: "Hold_Timer_expired",
+        10: "KeepAlive_timer_expired",
+        11: "DelayOpen_timer_expired",
+        12: "Receive_OPEN_message",
+        13: "Receive_KEEPALIVE_message",
+        14: "Receive_UPDATE_message",
+        15: "Receive_NOTIFICATION_message",
+        16: "Clearing_Completed",
+    }
+    return events.get(field_val, f"UNKNOWN({field_val})")
+
+
+def parse_frr_bgp_session_state_change(event):
+    field_parsers = {
+        "location": location_bgp_session_state_change,
+        "old_status": bgp_status_to_string,
+        "new_status": bgp_status_to_string,
+        "event": bgp_event_to_string,
+    }
+    parse_event(event, field_parsers)
+
+
+def connection_status_to_string(field_val):
+    statuses = {0: "connect_error", 1: "connect_success", 2: "connect_in_progress"}
+    return statuses.get(field_val, f"UNKNOWN({field_val})")
+
+
+def parse_frr_bgp_connection_attempt(event):
+    field_parsers = {
+        "status": connection_status_to_string,
+        "current_status": bgp_status_to_string,
+    }
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_fsm_event(event):
+    field_parsers = {
+        "event": bgp_event_to_string,
+        "current_status": bgp_status_to_string,
+        "next_status": bgp_status_to_string,
+    }
+    parse_event(event, field_parsers)
+
+
 def main():
     """
     FRR lttng trace output parser; babel trace plugin
     """
-    event_parsers = {"frr_bgp:evpn_mac_ip_zsend":
-                     parse_frr_bgp_evpn_mac_ip_zsend,
-                     "frr_bgp:evpn_bum_vtep_zsend":
-                     parse_frr_bgp_evpn_bum_vtep_zsend,
-                     "frr_bgp:evpn_mh_nh_rmac_zsend":
-                     parse_frr_bgp_evpn_mh_nh_rmac_send,
-                     "frr_bgp:evpn_mh_local_es_add_zrecv":
-                     parse_frr_bgp_evpn_mh_local_es_add_zrecv,
-                     "frr_bgp:evpn_mh_local_es_del_zrecv":
-                     parse_frr_bgp_evpn_mh_local_es_del_zrecv,
-                     "frr_bgp:evpn_mh_local_es_evi_add_zrecv":
-                     parse_frr_bgp_evpn_mh_local_es_evi_add_zrecv,
-                     "frr_bgp:evpn_mh_local_es_evi_del_zrecv":
-                     parse_frr_bgp_evpn_mh_local_es_evi_del_zrecv,
-                     "frr_bgp:evpn_mh_es_evi_vtep_add":
-                     parse_frr_bgp_evpn_mh_es_evi_vtep_add,
-                     "frr_bgp:evpn_mh_es_evi_vtep_del":
-                     parse_frr_bgp_evpn_mh_es_evi_vtep_del,
-                     "frr_bgp:evpn_mh_local_ead_es_evi_route_upd":
-                     parse_frr_bgp_evpn_mh_local_ead_es_evi_route_upd,
-                     "frr_bgp:evpn_mh_local_ead_es_evi_route_del":
-                     parse_frr_bgp_evpn_mh_local_ead_es_evi_route_del,
-                     "frr_bgp:evpn_local_vni_add_zrecv":
-                     parse_frr_bgp_evpn_local_vni_add_zrecv,
-                     "frr_bgp:evpn_local_l3vni_add_zrecv":
-                     parse_frr_bgp_evpn_local_l3vni_add_zrecv,
-                     "frr_bgp:evpn_local_macip_add_zrecv":
-                     parse_frr_bgp_evpn_local_macip_add_zrecv,
-                     "frr_bgp:evpn_local_macip_del_zrecv":
-                     parse_frr_bgp_evpn_local_macip_del_zrecv,
-                     "frr_bgp:evpn_advertise_type5":
-                     parse_frr_bgp_evpn_advertise_type5,
-                     "frr_bgp:evpn_withdraw_type5":
-                     parse_frr_bgp_evpn_withdraw_type5,
-}
+    event_parsers = {
+        "frr_bgp:evpn_mac_ip_zsend": parse_frr_bgp_evpn_mac_ip_zsend,
+        "frr_bgp:evpn_bum_vtep_zsend": parse_frr_bgp_evpn_bum_vtep_zsend,
+        "frr_bgp:evpn_mh_nh_rmac_zsend": parse_frr_bgp_evpn_mh_nh_rmac_send,
+        "frr_bgp:evpn_mh_local_es_add_zrecv": parse_frr_bgp_evpn_mh_local_es_add_zrecv,
+        "frr_bgp:evpn_mh_local_es_del_zrecv": parse_frr_bgp_evpn_mh_local_es_del_zrecv,
+        "frr_bgp:evpn_mh_local_es_evi_add_zrecv": parse_frr_bgp_evpn_mh_local_es_evi_add_zrecv,
+        "frr_bgp:evpn_mh_local_es_evi_del_zrecv": parse_frr_bgp_evpn_mh_local_es_evi_del_zrecv,
+        "frr_bgp:evpn_mh_es_evi_vtep_add": parse_frr_bgp_evpn_mh_es_evi_vtep_add,
+        "frr_bgp:evpn_mh_es_evi_vtep_del": parse_frr_bgp_evpn_mh_es_evi_vtep_del,
+        "frr_bgp:evpn_mh_local_ead_es_evi_route_upd": parse_frr_bgp_evpn_mh_local_ead_es_evi_route_upd,
+        "frr_bgp:evpn_mh_local_ead_es_evi_route_del": parse_frr_bgp_evpn_mh_local_ead_es_evi_route_del,
+        "frr_bgp:evpn_local_vni_add_zrecv": parse_frr_bgp_evpn_local_vni_add_zrecv,
+        "frr_bgp:evpn_local_l3vni_add_zrecv": parse_frr_bgp_evpn_local_l3vni_add_zrecv,
+        "frr_bgp:evpn_local_macip_add_zrecv": parse_frr_bgp_evpn_local_macip_add_zrecv,
+        "frr_bgp:evpn_local_macip_del_zrecv": parse_frr_bgp_evpn_local_macip_del_zrecv,
+        "frr_bgp:evpn_advertise_type5": parse_frr_bgp_evpn_advertise_type5,
+        "frr_bgp:evpn_withdraw_type5": parse_frr_bgp_evpn_withdraw_type5,
+        "frr_bgp:session_state_change": parse_frr_bgp_session_state_change,
+        "frr_bgp:connection_attempt": parse_frr_bgp_connection_attempt,
+        "frr_bgp:fsm_event": parse_frr_bgp_fsm_event,
+    }
 
     # get the trace path from the first command line argument
     trace_path = sys.argv[1]

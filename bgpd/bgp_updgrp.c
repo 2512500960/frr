@@ -333,6 +333,7 @@ static unsigned int updgrp_hash_key_make(const void *p)
 	 */
 #define SEED1 999331
 #define SEED2 2147483647
+#define SEED3 4258594758
 
 	updgrp = p;
 	peer = updgrp->conf;
@@ -438,6 +439,10 @@ static unsigned int updgrp_hash_key_make(const void *p)
 	    || CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_MAX_PREFIX_OUT))
 		key = jhash_1word(jhash(peer->host, strlen(peer->host), SEED2),
 				  key);
+
+	if (CHECK_FLAG(peer->flags, PEER_FLAG_GRACEFUL_SHUTDOWN))
+		key = jhash_1word(jhash(peer->host, strlen(peer->host), SEED3), key);
+
 	/*
 	 * Multiple sessions with the same neighbor should get their own
 	 * update-group if they have different roles.
@@ -967,10 +972,10 @@ static int update_group_show_walkcb(struct update_group *updgrp, void *arg)
 			if (ctx->uj) {
 				json_peers = json_object_new_array();
 				SUBGRP_FOREACH_PEER (subgrp, paf) {
-					json_object *peer =
+					json_object *jpeer =
 						json_object_new_string(
 							paf->peer->host);
-					json_object_array_add(json_peers, peer);
+					json_object_array_add(json_peers, jpeer);
 				}
 				json_object_object_add(json_subgrp, "peers",
 						       json_peers);
@@ -1158,8 +1163,8 @@ static void update_subgroup_delete(struct update_subgroup *subgrp)
 	if (subgrp->update_group)
 		UPDGRP_INCR_STAT(subgrp->update_group, subgrps_deleted);
 
-	EVENT_OFF(subgrp->t_merge_check);
-	EVENT_OFF(subgrp->t_coalesce);
+	event_cancel(&subgrp->t_merge_check);
+	event_cancel(&subgrp->t_coalesce);
 
 	bpacket_queue_cleanup(SUBGRP_PKTQ(subgrp));
 	subgroup_clear_table(subgrp);
@@ -1434,10 +1439,11 @@ static void update_subgroup_merge(struct update_subgroup *subgrp,
 	SUBGRP_INCR_STAT(target, merge_events);
 
 	if (BGP_DEBUG(update_groups, UPDATE_GROUPS))
-		zlog_debug("u%" PRIu64 ":s%" PRIu64" (%d peers) merged into u%" PRIu64 ":s%" PRIu64", trigger: %s",
-			   subgrp->update_group->id, subgrp->id, peer_count,
-			   target->update_group->id, target->id,
-			   reason ? reason : "unknown");
+		zlog_debug("u%" PRIu64 ":s%" PRIu64 " (%d peers) merged into u%" PRIu64
+			   ":s%" PRIu64 ", trigger: %s",
+			   subgrp->update_group ? subgrp->update_group->id : 0, subgrp->id,
+			   peer_count, target->update_group ? target->update_group->id : 0,
+			   target->id, reason ? reason : "unknown");
 
 	result = update_subgroup_check_delete(subgrp);
 	assert(result);
@@ -1477,11 +1483,11 @@ bool update_subgroup_check_merge(struct update_subgroup *subgrp,
 /*
 * update_subgroup_merge_check_thread_cb
 */
-static void update_subgroup_merge_check_thread_cb(struct event *thread)
+static void update_subgroup_merge_check_thread_cb(struct event *event)
 {
 	struct update_subgroup *subgrp;
 
-	subgrp = EVENT_ARG(thread);
+	subgrp = EVENT_ARG(event);
 
 	subgrp->t_merge_check = NULL;
 
@@ -2014,6 +2020,17 @@ void update_group_adjust_peer(struct peer_af *paf)
 	old_subgrp = paf->subgroup;
 
 	if (old_subgrp) {
+		/*
+		 * If we need to announce immediately, put peer in its
+		 * own group and set its coalesce timer to 0.
+		 */
+		if (peer_immediate_announce(peer, paf->afi, paf->safi)) {
+			update_subgroup_split_peer(paf, updgrp);
+			subgrp = paf->subgroup;
+			event_cancel(&subgrp->t_coalesce);
+			subgrp->v_coalesce = 0;
+			return;
+		}
 
 		/*
 		 * If the update group of the peer is unchanged, the peer can
@@ -2031,9 +2048,19 @@ void update_group_adjust_peer(struct peer_af *paf)
 		return;
 	}
 
-	subgrp = update_subgroup_find(updgrp, paf);
-	if (!subgrp)
+	/*
+	 * If we need to announce immediately, put peer in its
+	 * own group and set its coalesce timer to 0.
+	 */
+	if (peer_immediate_announce(peer, paf->afi, paf->safi)) {
 		subgrp = update_subgroup_create(updgrp);
+		event_cancel(&subgrp->t_coalesce);
+		subgrp->v_coalesce = 0;
+	} else {
+		subgrp = update_subgroup_find(updgrp, paf);
+		if (!subgrp)
+			subgrp = update_subgroup_create(updgrp);
+	}
 
 	update_subgroup_add_peer(subgrp, paf, 1);
 	if (BGP_DEBUG(update_groups, UPDATE_GROUPS))
@@ -2141,15 +2168,15 @@ update_group_default_originate_route_map_walkcb(struct update_group *updgrp,
 	return UPDWALK_CONTINUE;
 }
 
-void update_group_refresh_default_originate_route_map(struct event *thread)
+void update_group_refresh_default_originate_route_map(struct event *event)
 {
 	struct bgp *bgp;
 	char reason[] = "refresh default-originate route-map";
 
-	bgp = EVENT_ARG(thread);
+	bgp = EVENT_ARG(event);
 	update_group_walk(bgp, update_group_default_originate_route_map_walkcb,
 			  reason);
-	EVENT_OFF(bgp->t_rmap_def_originate_eval);
+	event_cancel(&bgp->t_rmap_def_originate_eval);
 }
 
 /*

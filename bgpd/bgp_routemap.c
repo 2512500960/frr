@@ -15,16 +15,6 @@
 #include "log.h"
 #include "frrlua.h"
 #include "frrscript.h"
-#ifdef HAVE_LIBPCRE2_POSIX
-#ifndef _FRR_PCRE2_POSIX
-#define _FRR_PCRE2_POSIX
-#include <pcre2posix.h>
-#endif /* _FRR_PCRE2_POSIX */
-#elif defined(HAVE_LIBPCREPOSIX)
-#include <pcreposix.h>
-#else
-#include <regex.h>
-#endif /* HAVE_LIBPCRE2_POSIX */
 #include "buffer.h"
 #include "sockunion.h"
 #include "hash.h"
@@ -59,6 +49,7 @@
 #include "bgpd/bgp_encap_types.h"
 #include "bgpd/bgp_mpath.h"
 #include "bgpd/bgp_script.h"
+#include "bgpd/bgp_encap_types.h"
 
 #ifdef ENABLE_BGP_VNC
 #include "bgpd/rfapi/bgp_rfapi_cfg.h"
@@ -479,11 +470,10 @@ route_match_script(void *rule, const struct prefix *prefix, void *object)
 
 		path->attr->med = newattr.med;
 
-		if (CHECK_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_LOCAL_PREF)))
+		if (bgp_attr_exists(path->attr, BGP_ATTR_LOCAL_PREF))
 			locpref = path->attr->local_pref;
 		if (locpref != newattr.local_pref) {
-			SET_FLAG(path->attr->flag,
-				 ATTR_FLAG_BIT(BGP_ATTR_LOCAL_PREF));
+			bgp_attr_set(path->attr, BGP_ATTR_LOCAL_PREF);
 			path->attr->local_pref = newattr.local_pref;
 		}
 		break;
@@ -1441,7 +1431,7 @@ route_set_evpn_gateway_ip(void *rule, const struct prefix *prefix, void *object)
 
 	/* Set gateway-ip value. */
 	bre->type = OVERLAY_INDEX_GATEWAY_IP;
-	memcpy(&bre->gw_ip, &gw_ip->ip.addr, IPADDRSZ(gw_ip));
+	bre->gw_ip = *gw_ip;
 	bgp_attr_set_evpn_overlay(path->attr, bre);
 
 	return RMAP_OKAY;
@@ -2210,7 +2200,7 @@ route_set_ip_nexthop(void *rule, const struct prefix *prefix, void *object)
 		    peer->connection->su_remote &&
 		    sockunion_family(peer->connection->su_remote) == AF_INET) {
 			path->attr->nexthop.s_addr = sockunion2ip(peer->connection->su_remote);
-			SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_NEXT_HOP));
+			bgp_attr_set(path->attr, BGP_ATTR_NEXT_HOP);
 		} else if (CHECK_FLAG(peer->rmap_type, PEER_RMAP_TYPE_OUT)) {
 			/* The next hop value will be set as part of
 			 * packet rewrite.  Set the flags here to indicate
@@ -2223,7 +2213,7 @@ route_set_ip_nexthop(void *rule, const struct prefix *prefix, void *object)
 		}
 	} else {
 		/* Set next hop value. */
-		SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_NEXT_HOP));
+		bgp_attr_set(path->attr, BGP_ATTR_NEXT_HOP);
 		path->attr->nexthop = *rins->address;
 		SET_FLAG(path->attr->rmap_change_flags,
 			 BATTR_RMAP_IPV4_NHOP_CHANGED);
@@ -2292,7 +2282,7 @@ static const struct route_map_rule_cmd route_set_ip_nexthop_cmd = {
 
 /* Set nexthop to object */
 struct rmap_l3vpn_nexthop_encapsulation_set {
-	uint8_t protocol;
+	enum zebra_iftype zif_type;
 };
 
 static enum route_map_cmd_result_t
@@ -2304,10 +2294,11 @@ route_set_l3vpn_nexthop_encapsulation(void *rule, const struct prefix *prefix,
 
 	path = object;
 
-	if (rins->protocol != IPPROTO_GRE)
-		return RMAP_OKAY;
+	if (rins->zif_type == ZEBRA_IF_GRE)
+		SET_FLAG(path->attr->rmap_change_flags, BATTR_RMAP_L3VPN_ACCEPT_GRE);
+	if (rins->zif_type == ZEBRA_IF_GRETAP)
+		SET_FLAG(path->attr->rmap_change_flags, BATTR_RMAP_L3VPN_ACCEPT_GRETAP);
 
-	SET_FLAG(path->attr->rmap_change_flags, BATTR_RMAP_L3VPN_ACCEPT_GRE);
 	return RMAP_OKAY;
 }
 
@@ -2319,8 +2310,13 @@ static void *route_set_l3vpn_nexthop_encapsulation_compile(const char *arg)
 	rins = XCALLOC(MTYPE_ROUTE_MAP_COMPILED,
 		       sizeof(struct rmap_l3vpn_nexthop_encapsulation_set));
 
-	/* XXX ALL GRE modes are accepted for now: gre or ip6gre */
-	rins->protocol = IPPROTO_GRE;
+	/* GRE IPv4 and IPv6 modes are covered under gre keyword
+	 * GRETAP IPv4 and IPv6 modes are covered under gretap keyword
+	 */
+	if (strmatch(arg, "gretap"))
+		rins->zif_type = ZEBRA_IF_GRETAP;
+	else
+		rins->zif_type = ZEBRA_IF_GRE;
 
 	return rins;
 }
@@ -2357,7 +2353,7 @@ route_set_local_pref(void *rule, const struct prefix *prefix, void *object)
 	if (path->attr->local_pref)
 		locpref = path->attr->local_pref;
 
-	SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_LOCAL_PREF));
+	bgp_attr_set(path->attr, BGP_ATTR_LOCAL_PREF);
 	path->attr->local_pref = route_value_adjust(rv, locpref, path);
 
 	return RMAP_OKAY;
@@ -2432,7 +2428,7 @@ route_set_metric(void *rule, const struct prefix *prefix, void *object)
 	rv = rule;
 	path = object;
 
-	if (CHECK_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_MULTI_EXIT_DISC)))
+	if (bgp_attr_exists(path->attr, BGP_ATTR_MULTI_EXIT_DISC))
 		med = path->attr->med;
 
 	bgp_attr_set_med(path->attr, route_value_adjust(rv, med, path));
@@ -2610,11 +2606,13 @@ route_set_aspath_exclude(void *rule, const struct prefix *dummy, void *object)
 			aspath_filter_exclude(new_path, ase->aspath);
 	else if (ase->exclude_all)
 		path->attr->aspath = aspath_filter_exclude_all(new_path);
-
 	else if (ase->exclude_aspath_acl)
 		path->attr->aspath =
 			aspath_filter_exclude_acl(new_path,
 						  ase->exclude_aspath_acl);
+	else
+		aspath_free(new_path);
+
 	return RMAP_OKAY;
 }
 
@@ -2732,7 +2730,7 @@ route_set_aspath_replace(void *rule, const struct prefix *dummy, void *object)
 		path->attr->aspath = aspath_replace_regex_asn(aspath_new,
 							      aspath_acl,
 							      configured_asn);
-	} else if (strmatch(replace, "any")) {
+	} else if (replace && strmatch(replace, "any")) {
 		path->attr->aspath =
 			aspath_replace_all_asn(aspath_new, configured_asn);
 	} else {
@@ -3031,10 +3029,13 @@ route_set_lcommunity_delete(void *rule, const struct prefix *pfx, void *object)
 static void *route_set_lcommunity_delete_compile(const char *arg)
 {
 	struct rmap_community *rcom;
-	char **splits;
-	int num;
+	char **splits = NULL;
+	int num = 0;
 
 	frrstr_split(arg, " ", &splits, &num);
+
+	if (splits == NULL)
+		return NULL;
 
 	rcom = XCALLOC(MTYPE_ROUTE_MAP_COMPILED, sizeof(struct rmap_community));
 	rcom->name = XSTRDUP(MTYPE_ROUTE_MAP_COMPILED, splits[0]);
@@ -3115,10 +3116,13 @@ route_set_community_delete(void *rule, const struct prefix *prefix,
 static void *route_set_community_delete_compile(const char *arg)
 {
 	struct rmap_community *rcom;
-	char **splits;
-	int num;
+	char **splits = NULL;
+	int num = 0;
 
 	frrstr_split(arg, " ", &splits, &num);
+
+	if (splits == NULL)
+		return NULL;
 
 	rcom = XCALLOC(MTYPE_ROUTE_MAP_COMPILED, sizeof(struct rmap_community));
 	rcom->name = XSTRDUP(MTYPE_ROUTE_MAP_COMPILED, splits[0]);
@@ -3632,7 +3636,7 @@ route_set_atomic_aggregate(void *rule, const struct prefix *pfx, void *object)
 	struct bgp_path_info *path;
 
 	path = object;
-	SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_ATOMIC_AGGREGATE));
+	bgp_attr_set(path->attr, BGP_ATTR_ATOMIC_AGGREGATE);
 
 	return RMAP_OKAY;
 }
@@ -3710,7 +3714,7 @@ route_set_aggregator_as(void *rule, const struct prefix *prefix, void *object)
 
 	path->attr->aggregator_as = aggregator->as;
 	path->attr->aggregator_addr = aggregator->address;
-	SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_AGGREGATOR));
+	bgp_attr_set(path->attr, BGP_ATTR_AGGREGATOR);
 
 	return RMAP_OKAY;
 }
@@ -3790,7 +3794,7 @@ route_set_label_index(void *rule, const struct prefix *prefix, void *object)
 	label_index = rv->value;
 	if (label_index) {
 		path->attr->label_index = label_index;
-		SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_PREFIX_SID));
+		bgp_attr_set(path->attr, BGP_ATTR_PREFIX_SID);
 	}
 
 	return RMAP_OKAY;
@@ -4457,7 +4461,7 @@ route_set_originator_id(void *rule, const struct prefix *prefix, void *object)
 	address = rule;
 	path = object;
 
-	SET_FLAG(path->attr->flag, ATTR_FLAG_BIT(BGP_ATTR_ORIGINATOR_ID));
+	bgp_attr_set(path->attr, BGP_ATTR_ORIGINATOR_ID);
 	path->attr->originator_id = *address;
 
 	return RMAP_OKAY;
@@ -4561,6 +4565,67 @@ static const struct route_map_rule_cmd route_match_rpki_extcommunity_cmd = {
 	route_match_extcommunity_compile,
 	route_value_free
 };
+
+static enum route_map_cmd_result_t
+route_match_vpn_dataplane(void *rule, const struct prefix *prefix, void *object)
+{
+	struct bgp_path_info *path_vpn;
+	bgp_encap_types *bgp_encap_type = rule;
+	struct bgp_dest *dest;
+	struct bgp_table *table = NULL;
+
+	/* Fetch routemap's rule information. */
+	path_vpn = object;
+	dest = path_vpn->net;
+
+	assert(path_vpn->attr);
+
+	if (dest)
+		table = bgp_dest_table(dest);
+
+	if (!table || table->safi == SAFI_UNICAST)
+		/* applied to unicast packet, find out the path_vpn origin. XXX */
+		return RMAP_OKAY;
+
+	/* for L2VPN */
+	if (table->safi == SAFI_EVPN) {
+		if (path_vpn->attr->encap_tunneltype == *bgp_encap_type)
+			return RMAP_MATCH;
+		return RMAP_NOMATCH;
+	}
+	/* for L3VPN */
+	if (*bgp_encap_type == BGP_ENCAP_TYPE_MPLS &&
+	    bgp_mplsvpn_path_uses_valid_mpls_label(path_vpn))
+		return RMAP_MATCH;
+
+	if (*bgp_encap_type == BGP_ENCAP_TYPE_SRV6 &&
+	    (path_vpn->attr->srv6_l3service || path_vpn->attr->srv6_vpn))
+		return RMAP_MATCH;
+
+	return RMAP_NOMATCH;
+}
+
+static void *route_match_vpn_dataplane_compile(const char *arg)
+{
+	uint16_t *tunnel_type;
+
+	tunnel_type = XCALLOC(MTYPE_ROUTE_MAP_COMPILED, sizeof(uint32_t));
+
+	if (strmatch(arg, "vxlan"))
+		*tunnel_type = BGP_ENCAP_TYPE_VXLAN;
+	else if (strmatch(arg, "mpls"))
+		*tunnel_type = BGP_ENCAP_TYPE_MPLS;
+	else if (strmatch(arg, "srv6"))
+		*tunnel_type = BGP_ENCAP_TYPE_SRV6;
+
+	return tunnel_type;
+}
+
+static const struct route_map_rule_cmd route_match_vpn_dataplane_cmd = {
+	"vpn dataplane", route_match_vpn_dataplane, route_match_vpn_dataplane_compile,
+	route_value_free
+};
+
 
 /*
  * This is the workhorse routine for processing in/out routemap
@@ -4761,7 +4826,7 @@ static void bgp_route_map_process_update(struct bgp *bgp, const char *rmap_name,
 		}
 
 		/* For network route-map updates. */
-		for (bn = bgp_table_top(bgp->route[afi][safi]); bn;
+		for (bn = bgp_table_top(bgp->static_routes[afi][safi]); bn;
 		     bn = bgp_route_next(bn)) {
 			bgp_static = bgp_dest_get_bgp_static_info(bn);
 			if (!bgp_static)
@@ -4895,7 +4960,8 @@ static void bgp_route_map_process_update(struct bgp *bgp, const char *rmap_name,
 				"Processing route_map %s(%s:%s) update on advertise type5 route command",
 				rmap_name, afi2str(afi), safi2str(safi));
 
-		if (route_update && advertise_type5_routes(bgp, afi)) {
+		if (route_update && (advertise_type5_routes_bestpath(bgp, afi) ||
+				     advertise_type5_routes_multipath(bgp, afi))) {
 			bgp_evpn_withdraw_type5_routes(bgp, afi, safi);
 			bgp_evpn_advertise_type5_routes(bgp, afi, safi);
 		}
@@ -4918,7 +4984,7 @@ static void bgp_route_map_process_update_cb(char *rmap_name)
 	vpn_policy_routemap_event(rmap_name);
 }
 
-void bgp_route_map_update_timer(struct event *thread)
+void bgp_route_map_update_timer(struct event *event)
 {
 	route_map_walk_update_list(bgp_route_map_process_update_cb);
 }
@@ -4931,7 +4997,7 @@ static void bgp_route_map_mark_update(const char *rmap_name)
 	/* If new update is received before the current timer timed out,
 	 * turn it off and start a new timer.
 	 */
-	EVENT_OFF(bm->t_rmap_update);
+	event_cancel(&bm->t_rmap_update);
 
 	/* rmap_update_timer of 0 means don't do route updates */
 	if (bm->rmap_update_timer) {
@@ -5593,7 +5659,7 @@ DEFUN_YANG (match_probability,
 
 DEFUN_YANG (no_match_probability,
 	    no_match_probability_cmd,
-	    "no match probability [(1-99)]",
+	    "no match probability [(0-100)]",
 	    NO_STR
 	    MATCH_STR
 	    "Match portion of routes defined by percentage value\n"
@@ -6282,12 +6348,13 @@ DEFUN_YANG (no_set_distance,
 }
 
 DEFPY_YANG(set_l3vpn_nexthop_encapsulation, set_l3vpn_nexthop_encapsulation_cmd,
-	   "[no] set l3vpn next-hop encapsulation gre",
+	   "[no] set l3vpn next-hop encapsulation <gre|gretap>$ziftype",
 	   NO_STR SET_STR
 	   "L3VPN operations\n"
 	   "Next hop Information\n"
 	   "Encapsulation options (for BGP only)\n"
-	   "Accept L3VPN traffic over GRE encapsulation\n")
+	   "Accept L3VPN traffic over GRE encapsulation\n"
+	   "Accept L3VPN traffic over GRETAP encapsulation\n")
 {
 	const char *xpath =
 		"./set-action[action='frr-bgp-route-map:set-l3vpn-nexthop-encapsulation']";
@@ -6304,7 +6371,7 @@ DEFPY_YANG(set_l3vpn_nexthop_encapsulation, set_l3vpn_nexthop_encapsulation_cmd,
 	if (operation == NB_OP_DESTROY)
 		return nb_cli_apply_changes(vty, NULL);
 
-	nb_cli_enqueue_change(vty, xpath_value, NB_OP_MODIFY, "gre");
+	nb_cli_enqueue_change(vty, xpath_value, NB_OP_MODIFY, ziftype);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
@@ -7188,7 +7255,7 @@ DEFUN_YANG(no_set_ecommunity_none, no_set_ecommunity_none_cmd,
 
 DEFUN_YANG (set_ecommunity_lb,
 	    set_ecommunity_lb_cmd,
-	    "set extcommunity bandwidth <(1-4294967295)|cumulative|num-multipaths> [non-transitive]",
+	    "set extcommunity bandwidth <(0-4294967295)|cumulative|num-multipaths> [non-transitive]",
 	    SET_STR
 	    "BGP extended community attribute\n"
 	    "Link bandwidth extended community\n"
@@ -7242,7 +7309,7 @@ DEFUN_YANG (set_ecommunity_lb,
 
 DEFUN_YANG (no_set_ecommunity_lb,
 	    no_set_ecommunity_lb_cmd,
-	    "no set extcommunity bandwidth <(1-4294967295)|cumulative|num-multipaths> [non-transitive]",
+	    "no set extcommunity bandwidth <(0-4294967295)|cumulative|num-multipaths> [non-transitive]",
 	    NO_STR
 	    SET_STR
 	    "BGP extended community attribute\n"
@@ -8014,6 +8081,35 @@ DEFPY_YANG (no_match_source_protocol,
 	return nb_cli_apply_changes(vty, NULL);
 }
 
+DEFPY_YANG (match_vpn_dataplane,
+       match_vpn_dataplane_cmd,
+       "[no$no] match vpn dataplane [<mpls|srv6|vxlan>$dataplane]",
+       NO_STR
+       MATCH_STR
+       "VPN operations\n"
+       "Dataplane operation\n"
+       "Valid MPLS path\n"
+       "Valid SRv6 path\n"
+       "Valid VXLAN path\n")
+{
+	const char *xpath = "./match-condition[condition='frr-bgp-route-map:match-vpn-dataplane']";
+	char xpath_value[XPATH_MAXLEN];
+	enum nb_operation operation = NB_OP_CREATE;
+
+	if (no || !dataplane)
+		operation = NB_OP_DESTROY;
+
+	nb_cli_enqueue_change(vty, xpath, operation, NULL);
+
+	if (!no && dataplane) {
+		snprintf(xpath_value, sizeof(xpath_value),
+			 "%s/rmap-match-condition/frr-bgp-route-map:vpn-dataplane", xpath);
+		nb_cli_enqueue_change(vty, xpath_value, NB_OP_MODIFY, dataplane);
+	}
+
+	return nb_cli_apply_changes(vty, NULL);
+}
+
 /* Initialization of route map. */
 void bgp_route_map_init(void)
 {
@@ -8280,7 +8376,9 @@ void bgp_route_map_init(void)
 	route_map_install_set(&route_set_ipv6_nexthop_local_cmd);
 	route_map_install_set(&route_set_ipv6_nexthop_peer_cmd);
 	route_map_install_match(&route_match_rpki_extcommunity_cmd);
+	route_map_install_match(&route_match_vpn_dataplane_cmd);
 
+	install_element(RMAP_NODE, &match_vpn_dataplane_cmd);
 	install_element(RMAP_NODE, &match_ipv6_next_hop_address_cmd);
 	install_element(RMAP_NODE, &no_match_ipv6_next_hop_address_cmd);
 	install_element(RMAP_NODE, &match_ipv6_next_hop_old_cmd);

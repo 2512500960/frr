@@ -18,32 +18,23 @@ import sys
 import time
 from pathlib import Path
 
+# We need to add to the path to import munet (when the user doesn't have it installed
+# themselves) so we can get it from `tests/topotests/munet` since this script is run
+# standalone `tests/topotests` is has not been added to sys.path by pytest.
+CWD = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.dirname(CWD))
+
 from munet.base import Timeout
 
-CWD = os.path.dirname(os.path.realpath(__file__))
+RUNNING_DS = 1
+CANDIDATE_DS = 2
+OPERATIONAL_DS = 3
 
-# This is painful but works if you have installed protobuf would be better if we
-# actually built and installed these but ... python packaging.
-try:
-    sys.path.append(os.path.dirname(CWD))
-    from munet.base import commander
-
-    commander.cmd_raises(f"protoc --python_out={CWD} -I {CWD}/../../../lib mgmt.proto")
-except Exception as error:
-    logging.error("can't create protobuf definition modules %s", error)
-    raise
-
-try:
-    sys.path[0:0] = "."
-    import mgmt_pb2  # pylint: disable=E0401
-except Exception as error:
-    logging.error("can't import proto definition modules %s", error)
-    raise
-
-CANDIDATE_DS = mgmt_pb2.DatastoreId.CANDIDATE_DS
-OPERATIONAL_DS = mgmt_pb2.DatastoreId.OPERATIONAL_DS
-RUNNING_DS = mgmt_pb2.DatastoreId.RUNNING_DS
-STARTUP_DS = mgmt_pb2.DatastoreId.STARTUP_DS
+datastore_name = {
+    RUNNING_DS: "running",
+    CANDIDATE_DS: "candidate",
+    OPERATIONAL_DS: "operational",
+}
 
 # =====================
 # Native message values
@@ -55,44 +46,71 @@ MGMT_MSG_MARKER_NATIVE = b"\001###"
 #
 # Native message formats
 #
-MSG_HDR_FMT = "=H2xIQQ"
+MSG_FMT_HDR = "=H2xIQQ"
 HDR_FIELD_CODE = 0
 HDR_FIELD_VSPLIT = 1
 HDR_FIELD_SESS_ID = 2
 HDR_FIELD_REQ_ID = 3
 
-MSG_ERROR_FMT = "=h6x"
+MSG_FMT_ERROR = "=h6x"
 ERROR_FIELD_ERROR = 0
 
-# MSG_GET_TREE_FMT = "=B7x"
+# MSG_FMT_GET_TREE = "=B7x"
 # GET_TREE_FIELD_RESULT_TYPE = 0
 
-MSG_TREE_DATA_FMT = "=bBB5x"
+MSG_FMT_TREE_DATA = "=bBB5x"
 TREE_DATA_FIELD_PARTIAL_ERROR = 0
 TREE_DATA_FIELD_RESULT_TYPE = 1
 TREE_DATA_FIELD_MORE = 2
 
-MSG_GET_DATA_FMT = "=BB6x"
+MSG_FMT_GET_DATA = "=BB6x"
 GET_DATA_FIELD_RESULT_TYPE = 0
 GET_DATA_FIELD_FLAGS = 1
 GET_DATA_FLAG_STATE = 0x1
 GET_DATA_FLAG_CONFIG = 0x2
 GET_DATA_FLAG_EXACT = 0x4
 
-MSG_NOTIFY_FMT = "=BB6x"
+MSG_FMT_NOTIFY = "=BB6x"
 NOTIFY_FIELD_RESULT_TYPE = 0
 NOTIFY_FIELD_OP = 1
 NOTIFY_OP_NOTIFICATION = 0
 NOTIFY_OP_REPLACE = 1
 NOTIFY_OP_DELETE = 2
 NOTIFY_OP_PATCH = 3
+NOTIFY_OP_GET_SYNC = 4
 
-MSG_NOTIFY_SELECT_FMT = "=B7x"
+MSG_FMT_NOTIFY_SELECT = "=B7x"
 
-MSG_SESSION_REQ_FMT = "=8x"
+MSG_FMT_SESSION_REQ = "=B7x"
 
-MSG_SESSION_REPLY_FMT = "=B7x"
+MSG_FMT_SESSION_REPLY = "=B7x"
 SESSION_REPLY_FIELD_CREATED = 0
+
+MSG_FMT_LOCK = "=BB6x"
+LOCK_FIELD_DATASTORE = 0
+LOCK_FIELD_LOCK = 1
+
+MSG_FMT_LOCK_REPLY = "=BB6x"
+LOCK_REPLY_FIELD_DATASTORE = 0
+LOCK_REPLY_FIELD_LOCK = 1
+
+MSG_FMT_COMMIT = "=BBBB4x"
+COMMIT_FIELD_SOURCE = 0
+COMMIT_FIELD_TARGET = 1
+COMMIT_FIELD_ACTION = 2
+COMMIT_ACTION_APPLY = 0
+COMMIT_ACTION_ABORT = 1
+COMMIT_ACTION_VALIDATE = 2
+COMMIT_FIELD_UNLOCK = 3
+
+MSG_FMT_COMMIT_REPLY = "=BBBB4x"
+COMMIT_REPLY_FIELD_SOURCE = 0
+COMMIT_REPLY_FIELD_TARGET = 1
+COMMIT_REPLY_FIELD_ACTION = 2
+COMMIT_REPLY_ACTION_APPLY = COMMIT_ACTION_APPLY
+COMMIT_REPLY_ACTION_ABORT = COMMIT_ACTION_ABORT
+COMMIT_REPLY_ACTION_VALIDATE = COMMIT_ACTION_VALIDATE
+COMMIT_REPLY_FIELD_UNLOCK = 3
 
 #
 # Native message codes
@@ -105,16 +123,24 @@ MSG_CODE_NOTIFY = 4
 MSG_CODE_NOTIFY_SELECT = 9
 MSG_CODE_SESSION_REQ = 10
 MSG_CODE_SESSION_REPLY = 11
+MSG_CODE_LOCK = 19
+MSG_CODE_LOCK_REPLY = 20
+MSG_CODE_COMMIT = 21
+MSG_CODE_COMMIT_REPLY = 22
 
 msg_native_formats = {
-    MSG_CODE_ERROR: MSG_ERROR_FMT,
-    # MSG_CODE_GET_TREE: MSG_GET_TREE_FMT,
-    MSG_CODE_TREE_DATA: MSG_TREE_DATA_FMT,
-    MSG_CODE_GET_DATA: MSG_GET_DATA_FMT,
-    MSG_CODE_NOTIFY: MSG_NOTIFY_FMT,
-    MSG_CODE_NOTIFY_SELECT: MSG_NOTIFY_SELECT_FMT,
-    MSG_CODE_SESSION_REQ: MSG_SESSION_REQ_FMT,
-    MSG_CODE_SESSION_REPLY: MSG_SESSION_REPLY_FMT,
+    MSG_CODE_ERROR: MSG_FMT_ERROR,
+    # MSG_CODE_GET_TREE: MSG_FMT_GET_TREE,
+    MSG_CODE_TREE_DATA: MSG_FMT_TREE_DATA,
+    MSG_CODE_GET_DATA: MSG_FMT_GET_DATA,
+    MSG_CODE_NOTIFY: MSG_FMT_NOTIFY,
+    MSG_CODE_NOTIFY_SELECT: MSG_FMT_NOTIFY_SELECT,
+    MSG_CODE_SESSION_REQ: MSG_FMT_SESSION_REQ,
+    MSG_CODE_SESSION_REPLY: MSG_FMT_SESSION_REPLY,
+    MSG_CODE_LOCK: MSG_FMT_LOCK,
+    MSG_CODE_LOCK_REPLY: MSG_FMT_LOCK_REPLY,
+    MSG_CODE_COMMIT: MSG_FMT_COMMIT,
+    MSG_CODE_COMMIT_REPLY: MSG_FMT_COMMIT_REPLY,
 }
 
 
@@ -134,19 +160,6 @@ class FEClientError(Exception):
     """Base class for frontend client errors."""
 
     pass
-
-
-class PBMessageError(FEClientError):
-    """Exception for errors related to protobuf messages."""
-
-    def __init__(self, msg, errstr):
-        """Initialize PBMessageError with message and error string."""
-        self.msg = msg
-        # self.sess_id = mhdr[HDR_FIELD_SESS_ID]
-        # self.req_id = mhdr[HDR_FIELD_REQ_ID]
-        self.error = -1
-        self.errstr = errstr
-        super().__init__(f"PBMessageError: {self.errstr}: {msg}")
 
 
 class NativeMessageError(FEClientError):
@@ -207,55 +220,40 @@ class Session:
 
     client_id = 1
 
-    def __init__(self, sock, use_protobuf):
+    def __init__(self, sock):
         """Initialize a session with the mgmtd server."""
         self.sock = sock
         self.next_req_id = 1
 
-        if use_protobuf:
-            # Register the client
-            req = mgmt_pb2.FeMessage()
-            req.register_req.client_name = "test-client"
-            self.send_pb_msg(req)
-            logging.debug("Sent FeRegisterReq: %s", req)
+        # Establish a native session
+        self.sess_id = 0
+        mdata, _ = self.get_native_msg_header(MSG_CODE_SESSION_REQ)
+        mdata += struct.pack(MSG_FMT_SESSION_REQ, MSG_FORMAT_JSON)
+        mdata += "test-client".encode("utf-8") + b"\x00"
+        self.send_native_msg(mdata)
+        logging.debug("Sent native SESSION-REQ")
 
-            # Create a session
-            req = mgmt_pb2.FeMessage()
-            req.session_req.create = 1
-            req.session_req.client_conn_id = Session.client_id
-            Session.client_id += 1
-            self.send_pb_msg(req)
-            logging.debug("Sent FeSessionReq: %s", req)
-
-            reply = self.recv_pb_msg(mgmt_pb2.FeMessage())
-            logging.debug("Received FeSessionReply: %s", repr(reply))
-
-            assert reply.session_reply.success
-            self.sess_id = reply.session_reply.session_id
+        mhdr, mfixed, mdata = self.recv_native_msg()
+        if mhdr[HDR_FIELD_CODE] == MSG_CODE_SESSION_REPLY:
+            logging.debug(
+                "Recv native SESSION-REPLY Message: sess-id %u: fixed: %s: %s",
+                mhdr[HDR_FIELD_SESS_ID],
+                mfixed,
+                mdata,
+            )
         else:
-            # Establish a native session
-            self.sess_id = 0
-            mdata, _ = self.get_native_msg_header(MSG_CODE_SESSION_REQ)
-            mdata += struct.pack(MSG_SESSION_REQ_FMT)
-            mdata += "test-client".encode("utf-8") + b"\x00"
-            self.send_native_msg(mdata)
-            logging.debug("Sent native SESSION-REQ")
-
-            mhdr, mfixed, mdata = self.recv_native_msg()
-            if mhdr[HDR_FIELD_CODE] == MSG_CODE_SESSION_REPLY:
-                logging.debug("Recv native SESSION-REQ Message: %s: %s", mfixed, mdata)
-            else:
-                raise Exception(f"Recv NON-SESSION-REPLY Message: {mfixed}: {mdata}")
-            assert mfixed[0]
-            self.sess_id = mhdr[HDR_FIELD_SESS_ID]
+            raise Exception(f"Recv NON-SESSION-REPLY Message: {mfixed}: {mdata}")
+        assert mfixed[0]
+        self.sess_id = mhdr[HDR_FIELD_SESS_ID]
 
     def close(self, clean=True):
         """Close the session."""
         if clean:
-            req = mgmt_pb2.FeMessage()
-            req.session_req.create = 0
-            req.session_req.sess_id = self.sess_id
-            self.send_pb_msg(req)
+            # sending session_req with a non-zero session ID destroys the session.
+            mdata, _ = self.get_native_msg_header(MSG_CODE_SESSION_REQ)
+            mdata += struct.pack(MSG_FMT_SESSION_REQ, MSG_FORMAT_JSON)
+            self.send_native_msg(mdata)
+            logging.debug("Sent native SESSION-REQ (destroy)")
         self.sock.close()
         self.sock = None
 
@@ -264,29 +262,6 @@ class Session:
         req_id = self.next_req_id
         self.next_req_id += 1
         return req_id
-
-    # --------------------------
-    # Protobuf message functions
-    # --------------------------
-
-    def recv_pb_msg(self, msg):
-        """Receive a protobuf message."""
-        mdata, native = recv_msg(self.sock)
-        assert not native
-
-        msg.ParseFromString(mdata)
-
-        req = getattr(msg, msg.WhichOneof("message"))
-        if req.HasField("success"):
-            if not req.success:
-                raise PBMessageError(msg, req.error_if_any)
-
-        return msg
-
-    def send_pb_msg(self, msg):
-        """Send a protobuf message."""
-        mdata = msg.SerializeToString()
-        return send_msg(self.sock, MGMT_MSG_MARKER_PROTOBUF, mdata)
 
     # ------------------------
     # Native message functions
@@ -297,9 +272,9 @@ class Session:
         mdata, native = recv_msg(self.sock)
         assert native
 
-        hlen = struct.calcsize(MSG_HDR_FMT)
+        hlen = struct.calcsize(MSG_FMT_HDR)
         hdata = mdata[:hlen]
-        mhdr = struct.unpack(MSG_HDR_FMT, hdata)
+        mhdr = struct.unpack(MSG_FMT_HDR, hdata)
         code = mhdr[0]
 
         if code not in msg_native_formats:
@@ -311,7 +286,7 @@ class Session:
         mfixed = struct.unpack(mfmt, fdata)
         mdata = mdata[hlen + flen :]
 
-        if code == MSG_ERROR_FMT:
+        if code == MSG_FMT_ERROR:
             raise NativeMessageError(mhdr, mfixed, mdata)
 
         return mhdr, mfixed, mdata
@@ -323,20 +298,20 @@ class Session:
     def get_native_msg_header(self, msg_code):
         """Generate a native message header for a given message code."""
         req_id = self.get_next_req_id()
-        hdata = struct.pack(MSG_HDR_FMT, msg_code, 0, self.sess_id, req_id)
+        hdata = struct.pack(MSG_FMT_HDR, msg_code, 0, self.sess_id, req_id)
         return hdata, req_id
 
     # -----------------------
     # Front-end API Fountains
     # -----------------------
 
-    def lock(self, lock=True, ds_id=mgmt_pb2.CANDIDATE_DS):
+    def lock(self, lock=True, ds_id=CANDIDATE_DS):
         """Lock or unlock a datastore.
 
         Args:
             lock (bool, optional): Whether to lock (True) or unlock (False) the
                                    datastore. Defaults to True.
-            ds_id (int, optional): The datastore ID. Defaults to mgmt_pb2.CANDIDATE_DS.
+            ds_id (int, optional): The datastore ID. Defaults to CANDIDATE_DS.
 
         Returns:
             None
@@ -344,17 +319,24 @@ class Session:
         Raises:
             AssertionError: If the lock request fails.
         """
-        req = mgmt_pb2.FeMessage()
-        req.lockds_req.session_id = self.sess_id
-        req.lockds_req.req_id = self.get_next_req_id()
-        req.lockds_req.ds_id = ds_id
-        req.lockds_req.lock = lock
-        self.send_pb_msg(req)
-        logging.debug("Sent LockDsReq: %s", req)
+        mdata, _ = self.get_native_msg_header(MSG_CODE_LOCK)
+        mdata += struct.pack(MSG_FMT_LOCK, ds_id, lock)
+        self.send_native_msg(mdata)
+        if lock:
+            logging.debug("Sent LOCK %s message", datastore_name[ds_id])
+        else:
+            logging.debug("Sent UNLOCK %s message", datastore_name[ds_id])
 
-        reply = self.recv_pb_msg(mgmt_pb2.FeMessage())
-        logging.debug("Received Reply: %s", repr(reply))
-        assert reply.lockds_reply.success
+        mhdr, mfixed, _ = self.recv_native_msg()
+        assert mhdr[HDR_FIELD_REQ_ID] == mdata[HDR_FIELD_REQ_ID]
+        assert mhdr[HDR_FIELD_CODE] == MSG_CODE_LOCK_REPLY
+        assert mfixed[LOCK_FIELD_DATASTORE] == ds_id
+        assert mfixed[LOCK_FIELD_LOCK] == lock
+        logging.debug(
+            "Received LOCK reply, %s is %s",
+            datastore_name[ds_id],
+            "locked" if lock else "unlocked",
+        )
 
     def get_data(self, query, data=True, config=False):
         """Retrieve data from the mgmtd server based on an XPath query.
@@ -374,7 +356,7 @@ class Session:
         mdata, _ = self.get_native_msg_header(MSG_CODE_GET_DATA)
         flags = GET_DATA_FLAG_STATE if data else 0
         flags |= GET_DATA_FLAG_CONFIG if config else 0
-        mdata += struct.pack(MSG_GET_DATA_FMT, MSG_FORMAT_JSON, flags)
+        mdata += struct.pack(MSG_FMT_GET_DATA, MSG_FORMAT_JSON, flags)
         mdata += query.encode("utf-8") + b"\x00"
 
         self.send_native_msg(mdata)
@@ -395,7 +377,7 @@ class Session:
             notif_xpaths (list of str): List of XPaths to subscribe to notifications on.
         """
         mdata, _ = self.get_native_msg_header(MSG_CODE_NOTIFY_SELECT)
-        mdata += struct.pack(MSG_NOTIFY_SELECT_FMT, replace)
+        mdata += struct.pack(MSG_FMT_NOTIFY_SELECT, replace)
 
         for xpath in notif_xpaths:
             mdata += xpath.encode("utf-8") + b"\x00"
@@ -464,9 +446,6 @@ def __parse_args():
         "-q", "--query", nargs="+", metavar="XPATH", help="xpath[s] to query"
     )
     parser.add_argument("-s", "--server", default=MPATH, help="path to server socket")
-    parser.add_argument(
-        "--use-protobuf", action="store_true", help="Use protobuf when there's a choice"
-    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Be verbose")
     args = parser.parse_args()
 
@@ -500,7 +479,7 @@ def __main():
     """Process client commands and handle queries or notifications."""
     args = __parse_args()
     sock = __server_connect(Path(args.server))
-    sess = Session(sock, use_protobuf=args.use_protobuf)
+    sess = Session(sock)
 
     if args.query:
         # Performa an xpath query
@@ -539,6 +518,12 @@ def __main():
             elif op == NOTIFY_OP_DELETE:
                 print(f"#OP=DELETE: {xpath}")
                 assert len(notif) == 0
+            elif op == NOTIFY_OP_GET_SYNC:
+                print(f"#OP=SYNC: {xpath}")
+                print(notif)
+            else:
+                logging.error("Unknown notification OP: %s", op)
+                sys.exit(1)
             i -= 1
 
 

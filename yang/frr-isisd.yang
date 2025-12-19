@@ -28,6 +28,10 @@ module frr-isisd {
     prefix frr-route-types;
   }
 
+  import frr-routing {
+    prefix frr-rt;
+  }
+
   organization
     "FRRouting";
   contact
@@ -65,20 +69,28 @@ module frr-isisd {
     description
       "Group SRGB and SRLB in a container so that they can be displayed
        and configured together";
+    reference
+      "ISO/IEC 10589:2002.";
   }
   revision 2020-04-06 {
     description
       "Group LSP timers in a container so that they can be displayed and
        configured together";
+    reference
+      "ISO/IEC 10589:2002.";
   }
   revision 2019-12-17 {
     description
       "Changed default area is-type to level-1-2";
+    reference
+      "ISO/IEC 10589:2002.";
   }
   revision 2019-09-09 {
     description
       "Changed interface references to use
        frr-interface:interface-ref typedef";
+    reference
+      "ISO/IEC 10589:2002.";
   }
   revision 2018-07-26 {
     description
@@ -144,6 +156,8 @@ module frr-isisd {
           "Add padding to hello packets during adjacency formation only.";
       }
     }
+    description
+      "Type for hello padding configuration.";
   }
 
   typedef network-type {
@@ -169,6 +183,8 @@ module frr-isisd {
           "Loopback circuit network-type. Only valid as a state.";
       }
     }
+    description
+      "Type of network for an IS-IS interface.";
   }
 
   typedef lsp-id {
@@ -278,14 +294,20 @@ module frr-isisd {
           "This enum describes transition metric style";
       }
     }
+    description
+      "Enumeration for IS-IS metric styles.";
   }
 
   typedef access-list-ref {
     type string;
+    description
+      "Reference to a access list.";
   }
 
   typedef prefix-list-ref {
     type string;
+    description
+      "Reference to a prefix list.";
   }
 
   grouping redistribute-attributes {
@@ -375,6 +397,9 @@ module frr-isisd {
   }
 
   grouping isis-area-password {
+    description
+      "Grouping for IS-IS area password configuration.";
+
     uses isis-password;
 
     leaf authenticate-snp {
@@ -402,6 +427,9 @@ module frr-isisd {
   }
 
   grouping global-config-lfa {
+    description
+      "Grouping for LFA configuration.";
+
     container lfa {
       description
         "LFA configuration.";
@@ -472,6 +500,9 @@ module frr-isisd {
   }
 
   grouping global-config-remote-lfa {
+    description
+      "Grouping for Remote LFA configuration.";
+
     container remote-lfa {
       description
         "Remote LFA configuration.";
@@ -485,6 +516,9 @@ module frr-isisd {
   }
 
   grouping interface-config-lfa {
+    description
+      "Grouping for LFA configuration on an interface.";
+
     container lfa {
       description
         "LFA configuration.";
@@ -503,19 +537,22 @@ module frr-isisd {
   }
 
   grouping interface-config-remote-lfa {
+    description
+      "Grouping for remote LFA configuration.";
+
     container remote-lfa {
       description
         "Remote LFA configuration.";
 
       leaf enable {
         type boolean;
-        default false;
-        description
-          "Enables remote LFA computation using LDP tunnels.";
         must ". = 'false' or ../../lfa/enable = 'true'" {
           error-message
             "Remote LFA depends on classic LFA being configured in the interface.";
         }
+        default false;
+        description
+          "Enables remote LFA computation using LDP tunnels.";
 
       }
       leaf maximum-metric {
@@ -529,15 +566,18 @@ module frr-isisd {
   }
 
   grouping interface-config-ti-lfa {
+    description
+      "Grouping for TI-LFA configuration.";
+
     container ti-lfa {
       description
         "TI-LFA configuration.";
       leaf enable {
+        type boolean;
         must ". = 'false' or ../../lfa/enable = 'false'" {
           error-message
             "Can't enable both classic LFA and TI-LFA in the same interface.";
         }
-        type boolean;
         default false;
         description
           "Enables TI-LFA computation.";
@@ -591,6 +631,9 @@ module frr-isisd {
     }
 
     container bfd-monitoring {
+      description
+        "Container for BFD monitoring configuration.";
+
       leaf enabled {
         type boolean;
         default "false";
@@ -773,6 +816,9 @@ module frr-isisd {
     container password {
       presence "Present if a password is set for this IS interface.";
       uses isis-password;
+
+      description
+        "Container for the password of this IS interface.";
     }
 
     leaf disable-three-way-handshake {
@@ -1066,6 +1112,9 @@ module frr-isisd {
       description
         "This container lists the information of adjacency SID.";
       list adjacency-sid {
+        description
+          "List of adjacency SIDs.";
+
         leaf af {
           type uint8;
           description
@@ -1101,6 +1150,9 @@ module frr-isisd {
       description
         "This container lists the information of LAN adjacency SID.";
       list lan-adjacency-sid {
+        description
+          "List of LAN adjacency SIDs.";
+
         leaf af {
           type uint8;
           description
@@ -1487,6 +1539,8 @@ module frr-isisd {
           leaf level {
             type level;
             must "(. != \"level-1-2\") and ((../../../is-type = \"level-1-2\") or (. = ../../../is-type))";
+            description
+              "Specifies the level to which the default route should be distributed.";
           }
 
           uses redistribute-default;
@@ -1499,6 +1553,8 @@ module frr-isisd {
           leaf level {
             type level;
             must "(. != \"level-1-2\") and ((../../../is-type = \"level-1-2\") or (. = ../../../is-type))";
+            description
+              "Specifies the level to which the default route should be distributed.";
           }
 
           uses redistribute-default;
@@ -1535,11 +1591,14 @@ module frr-isisd {
 	  }
 
           choice protocol-type {
+            description
+              "Choice of routing protocol type.";
+
             case protocol-table {
               when "./protocol = \"table\"";
               list table {
-                key "table";
                 when "../protocol = \"table\"";
+                key "table";
                 description
                   "Routing table number";
 
@@ -1587,11 +1646,16 @@ module frr-isisd {
           }
 
           choice protocol-type {
+            description
+                "Choice of routing protocol type.";
+
             case protocol-table {
-              when "./protocol = \"table\"";
               list table {
-                key "table";
                 when "../protocol = \"table\"";
+                key "table";
+
+                description
+                  "List of routing tables for the 'table' protocol.";
 
                 leaf table {
                   type uint16 {
@@ -1603,6 +1667,7 @@ module frr-isisd {
 
                 uses redistribute-attributes;
               }
+              when "./protocol = \"table\"";
             }
             case protocol-other {
               uses redistribute-attributes;
@@ -1622,6 +1687,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
 
@@ -1632,6 +1699,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
 
@@ -1642,6 +1711,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
 
@@ -1652,6 +1723,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
 
@@ -1662,6 +1735,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
 
@@ -1672,6 +1747,8 @@ module frr-isisd {
           leaf overload {
             type boolean;
             default "false";
+            description
+              "If set to true, the router will advertise itself as overloaded to its neighbors.";
           }
         }
       }
@@ -1777,9 +1854,6 @@ module frr-isisd {
               "Use Flex-algo Prefix Metric";
           }
           leaf metric-type {
-            default "igp";
-            description
-              "Set the Flex-Algo metric-type";
 		    type enumeration {
 		      enum "igp" {
 		        value 0;
@@ -1797,6 +1871,9 @@ module frr-isisd {
 			  "RFC 5305 Sec 3.7 Traffic Engineering Default Metric";
 		      }
 		    }
+                    default "igp";
+                    description
+                      "Set the Flex-Algo metric-type";
           }
           leaf priority {
             type uint32 {
@@ -1846,15 +1923,15 @@ module frr-isisd {
             description
               "Global blocks to be advertised.";
             leaf lower-bound {
-                must "../upper-bound > .";
                 type uint32;
+                must "../upper-bound > .";
                 default "16000";
                 description
                   "Lower value in the label range.";
             }
             leaf upper-bound {
-                must ". > ../lower-bound";
                 type uint32;
+                must ". > ../lower-bound";
                 default "23999";
                 description
                   "Upper value in the label range.";
@@ -1864,15 +1941,15 @@ module frr-isisd {
             description
               "Local blocks to be advertised.";
             leaf lower-bound {
-                must "../upper-bound > .";
                 type uint32;
+                must "../upper-bound > .";
                 default "15000";
                 description
                   "Lower value in the label range.";
             }
             leaf upper-bound {
-                must ". > ../lower-bound";
                 type uint32;
+                must ". > ../lower-bound";
                 default "15999";
                 description
                   "Upper value in the label range.";
@@ -2100,9 +2177,9 @@ module frr-isisd {
         }
         leaf interface {
           type string;
+          default "sr0";
           description
             "Dummy interface used to install SRv6 SIDs into the Linux data plane.";
-          default "sr0";
         }
       }
 
@@ -2563,7 +2640,7 @@ module frr-isisd {
     }
 
     leaf received-timestamp {
-      type yang:timestamp;
+      type frr-rt:unix-timestamp;
       description
         "Timestamp when the LSP was received.";
     }
@@ -2595,7 +2672,7 @@ module frr-isisd {
     }
 
     leaf send-timestamp {
-      type yang:timestamp;
+      type frr-rt:unix-timestamp;
       description
         "Timestamp when our LSP was regenerated.";
     }

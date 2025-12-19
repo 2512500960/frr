@@ -35,6 +35,7 @@
 #include "bgpd/bgp_updgrp.h"
 #include "bgpd/bgp_advertise.h"
 #include "bgpd/bgp_addpath.h"
+#include "bgpd/bgp_nhc.h"
 
 
 /********************
@@ -143,9 +144,13 @@ subgrp_announce_addpath_best_selected(struct bgp_dest *dest,
 			if (listnode_lookup(list, pi))
 				subgroup_process_announce_selected(
 					subgrp, pi, dest, afi, safi, id);
-			else
+			else {
+				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+					continue;
+
 				subgroup_process_announce_selected(
 					subgrp, NULL, dest, afi, safi, id);
+			}
 		} else {
 			/* No Paths-Limit involved */
 			if (!paths_limit) {
@@ -384,13 +389,13 @@ static void updgrp_show_adj(struct bgp *bgp, afi_t afi, safi_t safi,
 	update_group_af_walk(bgp, afi, safi, updgrp_show_adj_walkcb, &ctx);
 }
 
-static void subgroup_coalesce_timer(struct event *thread)
+static void subgroup_coalesce_timer(struct event *event)
 {
 	struct update_subgroup *subgrp;
 	struct bgp *bgp;
 	safi_t safi;
 
-	subgrp = EVENT_ARG(thread);
+	subgrp = EVENT_ARG(event);
 	if (bgp_debug_update(NULL, NULL, subgrp->update_group, 0))
 		zlog_debug("u%" PRIu64 ":s%" PRIu64" announcing routes upon coalesce timer expiry(%u ms)",
 			   (SUBGRP_UPDGRP(subgrp))->id, subgrp->id,
@@ -419,7 +424,7 @@ static void subgroup_coalesce_timer(struct event *thread)
 			peer = PAF_PEER(paf);
 			struct peer_connection *connection = peer->connection;
 
-			EVENT_OFF(connection->t_routeadv);
+			event_cancel(&connection->t_routeadv);
 			BGP_TIMER_ON(connection->t_routeadv, bgp_routeadv_timer,
 				     0);
 		}
@@ -589,8 +594,8 @@ bool bgp_adj_out_set_subgroup(struct bgp_dest *dest,
 
 			bgp_dump_attr(attr, attr_str, sizeof(attr_str));
 
-			zlog_debug("%s suppress UPDATE %pBD w/ attr: %s", peer->host, dest,
-				   attr_str);
+			zlog_debug("%s suppress UPDATE %pBD w/ attr: %s, afi=%s, safi=%s",
+				   peer->host, dest, attr_str, afi2str(afi), safi2str(safi));
 		}
 
 		/*
@@ -859,14 +864,19 @@ void subgroup_announce_route(struct update_subgroup *subgrp)
 	    && SUBGRP_SAFI(subgrp) != SAFI_ENCAP
 	    && SUBGRP_SAFI(subgrp) != SAFI_EVPN)
 		subgroup_announce_table(subgrp, NULL);
-	else
-		for (dest = bgp_table_top(update_subgroup_rib(subgrp)); dest;
-		     dest = bgp_route_next(dest)) {
+	else {
+		struct bgp_table *rib = update_subgroup_rib(subgrp);
+
+		if (!rib)
+			return;
+
+		for (dest = bgp_table_top(rib); dest; dest = bgp_route_next(dest)) {
 			table = bgp_dest_get_bgp_table_info(dest);
 			if (!table)
 				continue;
 			subgroup_announce_table(subgrp, table);
 		}
+	}
 }
 
 void subgroup_default_originate(struct update_subgroup *subgrp, bool withdraw)
@@ -906,6 +916,9 @@ void subgroup_default_originate(struct update_subgroup *subgrp, bool withdraw)
 
 	bgp = peer->bgp;
 	from = bgp->peer_self;
+
+	if (bgp_update_delay_active(peer->bgp))
+		return;
 
 	bgp_attr_default_set(&attr, bgp, BGP_ORIGIN_IGP);
 
@@ -1060,7 +1073,8 @@ void subgroup_default_originate(struct update_subgroup *subgrp, bool withdraw)
 			}
 
 			/* Advertise the default route */
-			if (bgp_in_graceful_shutdown(bgp))
+			if (bgp_in_graceful_shutdown(bgp) ||
+			    (CHECK_FLAG(peer->flags, PEER_FLAG_GRACEFUL_SHUTDOWN)))
 				bgp_attr_add_gshut_community(new_attr);
 
 			SET_FLAG(subgrp->sflags,

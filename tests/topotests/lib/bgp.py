@@ -5,6 +5,7 @@
 # ("NetDEF") in this file.
 #
 
+import json
 import ipaddress
 import sys
 import traceback
@@ -149,7 +150,7 @@ def create_router_bgp(tgen, topo=None, input_dict=None, build=False, load_config
 
         bgp_data_list = input_dict[router]["bgp"]
 
-        if type(bgp_data_list) is not list:
+        if not isinstance(bgp_data_list, list):
             bgp_data_list = [bgp_data_list]
 
         config_data = []
@@ -352,6 +353,13 @@ def __create_bgp_global(tgen, input_dict, router, build=False):
         elif bgp_always_compare_med == False:
             config_data.append("no bgp always-compare-med")
 
+    if "bgp_accept_as_sets" in bgp_data:
+        bgp_accept_as_sets = bgp_data["bgp_accept_as_sets"]
+        if bgp_accept_as_sets == True:
+            config_data.append("no bgp reject-as-sets")
+        elif bgp_accept_as_sets == False:
+            config_data.append("bgp reject-as-sets")
+
     logger.debug("Exiting lib API: {}".format(sys._getframe().f_code.co_name))
     return config_data
 
@@ -396,7 +404,7 @@ def __create_bgp_unicast_neighbor(
         advertise_network = addr_data.setdefault("advertise_networks", [])
         for advertise_network_dict in advertise_network:
             network = advertise_network_dict["network"]
-            if type(network) is not list:
+            if not isinstance(network, list):
                 network = [network]
 
             if "no_of_network" in advertise_network_dict:
@@ -475,7 +483,7 @@ def __create_bgp_unicast_neighbor(
                     cmd = "redistribute {}".format(redistribute["redist_type"])
                     redist_attr = redistribute.setdefault("attribute", None)
                     if redist_attr:
-                        if type(redist_attr) is dict:
+                        if isinstance(redist_attr, dict):
                             for key, value in redist_attr.items():
                                 cmd = "{} {} {}".format(cmd, key, value)
                         else:
@@ -654,7 +662,7 @@ def __create_l2vpn_evpn_address_family(
 
         if advertise_data:
             for address_type, unicast_type in advertise_data.items():
-                if type(unicast_type) is dict:
+                if isinstance(unicast_type, dict):
                     for key, value in unicast_type.items():
                         cmd = "advertise {} {}".format(address_type, key)
 
@@ -681,7 +689,7 @@ def __create_l2vpn_evpn_address_family(
                             "ipv4"
                         ].split("/")[0]
 
-                        if type(action) is dict:
+                        if isinstance(action, dict):
                             next_hop_self = action.setdefault("next_hop_self", None)
                             route_maps = action.setdefault("route_maps", {})
 
@@ -840,7 +848,7 @@ def __create_bgp_neighbor(topo, input_dict, router, addr_type, add_neigh=True):
                     )
             nh_details = topo[name]
 
-            if "vrfs" in topo[router] or type(nh_details["bgp"]) is list:
+            if "vrfs" in topo[router] or isinstance(nh_details["bgp"], list):
                 for vrf_data in nh_details["bgp"]:
                     if "vrf" in nh_details["links"][dest_link] and "vrf" in vrf_data:
                         if nh_details["links"][dest_link]["vrf"] == vrf_data["vrf"]:
@@ -1253,7 +1261,7 @@ def modify_bgp_config_when_bgpd_down(tgen, topo, input_dict):
 #############################################
 # Verification APIs
 #############################################
-@retry(retry_timeout=8)
+@retry(retry_timeout=30)
 def verify_router_id(tgen, topo, input_dict, expected=True):
     """
     Running command "show ip bgp json" for DUT and reading router-id
@@ -1373,7 +1381,7 @@ def verify_bgp_convergence(tgen, topo=None, dut=None, expected=True, addr_type=N
         # To find neighbor ip type
         bgp_data_list = topo["routers"][router]["bgp"]
 
-        if type(bgp_data_list) is not list:
+        if not isinstance(bgp_data_list, list):
             bgp_data_list = [bgp_data_list]
 
         for bgp_data in bgp_data_list:
@@ -1697,7 +1705,7 @@ def modify_as_number(tgen, topo, input_dict):
     return result
 
 
-@retry(retry_timeout=8)
+@retry(retry_timeout=30)
 def verify_as_numbers(tgen, topo, input_dict, expected=True):
     """
     This API is to verify AS numbers for given DUT by running
@@ -1884,7 +1892,7 @@ def clear_bgp(tgen, addr_type, router, vrf=None, neighbor=None):
     rnode = tgen.routers()[router]
 
     if vrf:
-        if type(vrf) is not list:
+        if not isinstance(vrf, list):
             vrf = [vrf]
 
     # Clearing BGP
@@ -2446,7 +2454,7 @@ def verify_bgp_attributes(
                             dict_to_test = values
                             for rmap_dict in values:
                                 if seq_id is not None:
-                                    if type(seq_id) is not list:
+                                    if not isinstance(seq_id, list):
                                         seq_id = [seq_id]
 
                                     if "seq_id" in rmap_dict:
@@ -2508,7 +2516,7 @@ def verify_bgp_attributes(
     return True
 
 
-@retry(retry_timeout=8)
+@retry(retry_timeout=30)
 def verify_best_path_as_per_bgp_attribute(
     tgen, addr_type, router, input_dict, attribute, expected=True
 ):
@@ -2714,7 +2722,7 @@ def verify_best_path_as_per_bgp_attribute(
     return True
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_best_path_as_per_admin_distance(
     tgen, addr_type, router, input_dict, attribute, expected=True, vrf=None
 ):
@@ -2952,7 +2960,7 @@ def verify_bgp_rib(
                             found_routes.append(st_rt)
 
                             if next_hop and multi_nh and st_found:
-                                if type(next_hop) is not list:
+                                if not isinstance(next_hop, list):
                                     next_hop = [next_hop]
                                     list1 = next_hop
 
@@ -2991,7 +2999,7 @@ def verify_bgp_rib(
                                         nh_found = True
 
                             elif next_hop and multi_nh is None:
-                                if type(next_hop) is not list:
+                                if not isinstance(next_hop, list):
                                     next_hop = [next_hop]
                                     list1 = next_hop
                                 found_hops = [
@@ -3077,7 +3085,7 @@ def verify_bgp_rib(
             # Advertise networks
             bgp_data_list = input_dict[routerInput]["bgp"]
 
-            if type(bgp_data_list) is not list:
+            if not isinstance(bgp_data_list, list):
                 bgp_data_list = [bgp_data_list]
 
             for bgp_data in bgp_data_list:
@@ -3147,7 +3155,7 @@ def verify_bgp_rib(
     return True
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_graceful_restart(
     tgen, topo, addr_type, input_dict, dut, peer, expected=True
 ):
@@ -3402,42 +3410,65 @@ def verify_graceful_restart(
                         rmode = "Helper"
                 else:
                     rmode = "Helper"
-
-            if show_bgp_graceful_json_out["localGrMode"] == lmode:
+            if (
+                show_bgp_graceful_json_out["gracefulRestartInfo"]["localGrMode"]
+                == lmode
+            ):
                 logger.info(
                     "[DUT: {}]: localGrMode : {} ".format(
-                        dut, show_bgp_graceful_json_out["localGrMode"]
+                        dut,
+                        show_bgp_graceful_json_out["gracefulRestartInfo"][
+                            "localGrMode"
+                        ],
                     )
                 )
             else:
                 errormsg = (
                     "[DUT: {}]: localGrMode is not correct"
                     " Expected: {}, Found: {}".format(
-                        dut, lmode, show_bgp_graceful_json_out["localGrMode"]
+                        dut,
+                        lmode,
+                        show_bgp_graceful_json_out["gracefulRestartInfo"][
+                            "localGrMode"
+                        ],
                     )
                 )
                 return errormsg
 
-            if show_bgp_graceful_json_out["remoteGrMode"] == rmode:
+            if (
+                show_bgp_graceful_json_out["gracefulRestartInfo"]["remoteGrMode"]
+                == rmode
+            ):
                 logger.info(
                     "[DUT: {}]: remoteGrMode : {} ".format(
-                        dut, show_bgp_graceful_json_out["remoteGrMode"]
+                        dut,
+                        show_bgp_graceful_json_out["gracefulRestartInfo"][
+                            "remoteGrMode"
+                        ],
                     )
                 )
             elif (
-                show_bgp_graceful_json_out["remoteGrMode"] == "NotApplicable"
+                show_bgp_graceful_json_out["gracefulRestartInfo"]["remoteGrMode"]
+                == "NotApplicable"
                 and rmode == "Disable"
             ):
                 logger.info(
                     "[DUT: {}]: remoteGrMode : {} ".format(
-                        dut, show_bgp_graceful_json_out["remoteGrMode"]
+                        dut,
+                        show_bgp_graceful_json_out["gracefulRestartInfo"][
+                            "remoteGrMode"
+                        ],
                     )
                 )
             else:
                 errormsg = (
                     "[DUT: {}]: remoteGrMode is not correct"
                     " Expected: {}, Found: {}".format(
-                        dut, rmode, show_bgp_graceful_json_out["remoteGrMode"]
+                        dut,
+                        rmode,
+                        show_bgp_graceful_json_out["gracefulRestartInfo"][
+                            "remoteGrMode"
+                        ],
                     )
                 )
                 return errormsg
@@ -3446,7 +3477,7 @@ def verify_graceful_restart(
     return True
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_r_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     """
     This API is to verify r_bit in the BGP gr capability advertised
@@ -3555,8 +3586,8 @@ def verify_r_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
                 )
                 return errormsg
 
-            if "rBit" in show_bgp_graceful_json_out:
-                if show_bgp_graceful_json_out["rBit"]:
+            if "rBit" in show_bgp_graceful_json_out["gracefulRestartInfo"]:
+                if show_bgp_graceful_json_out["gracefulRestartInfo"]["rBit"]:
                     logger.info("[DUT: {}]: Rbit true {}".format(dut, neighbor_ip))
                 else:
                     errormsg = "[DUT: {}]: Rbit false {}".format(dut, neighbor_ip)
@@ -3566,7 +3597,7 @@ def verify_r_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     return True
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_eor(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     """
     This API is to verify EOR
@@ -3681,7 +3712,9 @@ def verify_eor(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
                 errormsg = "Address type %s is not supported" % (addr_type)
                 return errormsg
 
-            eor_json = show_bgp_graceful_json_out[afi]["endOfRibStatus"]
+            eor_json = show_bgp_graceful_json_out["gracefulRestartInfo"][afi][
+                "endOfRibStatus"
+            ]
             if "endOfRibSend" in eor_json:
                 if eor_json["endOfRibSend"]:
                     logger.info(
@@ -3728,7 +3761,7 @@ def verify_eor(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     return True
 
 
-@retry(retry_timeout=8)
+@retry(retry_timeout=30)
 def verify_f_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     """
     This API is to verify f_bit in the BGP gr capability advertised
@@ -3826,9 +3859,9 @@ def verify_f_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
                 isjson=True,
             )
 
-            show_bgp_graceful_json_out = show_bgp_graceful_json[neighbor_ip]
+            show_bgp_graceful_nbr_json_out = show_bgp_graceful_json[neighbor_ip]
 
-            if show_bgp_graceful_json_out["neighborAddr"] == neighbor_ip:
+            if show_bgp_graceful_nbr_json_out["neighborAddr"] == neighbor_ip:
                 logger.info(
                     "[DUT: {}]: Neighbor ip matched  {}".format(dut, neighbor_ip)
                 )
@@ -3837,6 +3870,10 @@ def verify_f_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
                     dut, neighbor_ip
                 )
                 return errormsg
+
+            show_bgp_graceful_json_out = show_bgp_graceful_nbr_json_out[
+                "gracefulRestartInfo"
+            ]
 
             if "ipv4Unicast" in show_bgp_graceful_json_out:
                 if show_bgp_graceful_json_out["ipv4Unicast"]["fBit"]:
@@ -3869,7 +3906,7 @@ def verify_f_bit(tgen, topo, addr_type, input_dict, dut, peer, expected=True):
     return True
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_graceful_restart_timers(tgen, topo, addr_type, input_dict, dut, peer):
     """
     This API is to verify graceful restart timers, configured and received
@@ -3974,9 +4011,9 @@ def verify_graceful_restart_timers(tgen, topo, addr_type, input_dict, dut, peer)
                         if rs_timer == "restart-time":
                             receivedTimer = value
                             if (
-                                show_bgp_graceful_json_out["timers"][
-                                    "receivedRestartTimer"
-                                ]
+                                show_bgp_graceful_json_out["gracefulRestartInfo"][
+                                    "timers"
+                                ]["receivedRestartTimer"]
                                 == receivedTimer
                             ):
                                 logger.info(
@@ -3996,7 +4033,7 @@ def verify_graceful_restart_timers(tgen, topo, addr_type, input_dict, dut, peer)
     return True
 
 
-@retry(retry_timeout=8)
+@retry(retry_timeout=30)
 def verify_gr_address_family(
     tgen, topo, addr_type, addr_family, dut, peer, expected=True
 ):
@@ -4070,7 +4107,7 @@ def verify_gr_address_family(
         return errormsg
 
     if addr_family == "ipv4Unicast":
-        if "ipv4Unicast" in show_bgp_graceful_json_out:
+        if "ipv4Unicast" in show_bgp_graceful_json_out["gracefulRestartInfo"]:
             logger.info("ipv4Unicast present for {} ".format(neighbor_ip))
             return True
         else:
@@ -4078,7 +4115,7 @@ def verify_gr_address_family(
             return errormsg
 
     elif addr_family == "ipv6Unicast":
-        if "ipv6Unicast" in show_bgp_graceful_json_out:
+        if "ipv6Unicast" in show_bgp_graceful_json_out["gracefulRestartInfo"]:
             logger.info("ipv6Unicast present for {} ".format(neighbor_ip))
             return True
         else:
@@ -4156,7 +4193,7 @@ def verify_attributes_for_evpn_routes(
                 if "vrf" in static_route:
                     vrf = static_route["vrf"]
 
-                if type(network) is not list:
+                if not isinstance(network, list):
                     network = [network]
 
                 for route in network:
@@ -4361,7 +4398,7 @@ def verify_attributes_for_evpn_routes(
                             route,
                         )
 
-                        if type(rt) is not list:
+                        if not isinstance(rt, list):
                             rt = [rt]
 
                         for _rt in rt:
@@ -4493,7 +4530,7 @@ def verify_attributes_for_evpn_routes(
     return False
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_evpn_routes(
     tgen, topo, dut, input_dict, routeType=5, EthTag=0, next_hop=None, expected=True
 ):
@@ -4540,7 +4577,7 @@ def verify_evpn_routes(
             for static_route in input_dict[router]["static_routes"]:
                 network = static_route["network"]
 
-                if type(network) is not list:
+                if not isinstance(network, list):
                     network = [network]
 
                 missing_routes = {}
@@ -4565,7 +4602,7 @@ def verify_evpn_routes(
                         return errormsg
 
                     for key, route_data_json in evpn_value_json.items():
-                        if type(route_data_json) is dict:
+                        if isinstance(route_data_json, dict):
                             rd_keys += 1
                             if prefix not in route_data_json:
                                 missing_routes[key] = prefix
@@ -4579,7 +4616,7 @@ def verify_evpn_routes(
                         return errormsg
 
                     for key, route_data_json in evpn_value_json.items():
-                        if type(route_data_json) is dict:
+                        if isinstance(route_data_json, dict):
                             if prefix not in route_data_json:
                                 continue
 
@@ -4640,7 +4677,7 @@ def verify_evpn_routes(
     return False
 
 
-@retry(retry_timeout=10)
+@retry(retry_timeout=30)
 def verify_bgp_bestpath(tgen, addr_type, input_dict):
     """
     Verifies bgp next hop values in best-path output
@@ -4895,7 +4932,7 @@ def get_prefix_count_route(
             logger.error("ERROR...! Unknown dut {} in topolgy".format(dut))
 
 
-@retry(retry_timeout=5)
+@retry(retry_timeout=30)
 def verify_rib_default_route(
     tgen,
     topo,
@@ -5247,7 +5284,7 @@ def verify_rib_default_route(
         return False
 
 
-@retry(retry_timeout=5)
+@retry(retry_timeout=30)
 def verify_fib_default_route(tgen, topo, dut, routes, expected_nexthop):
     """
     API to verify the the 'Default route" in FIB
@@ -5331,7 +5368,7 @@ def verify_fib_default_route(tgen, topo, dut, routes, expected_nexthop):
         return False
 
 
-@retry(retry_timeout=5)
+@retry(retry_timeout=30)
 def verify_bgp_advertised_routes_from_neighbor(tgen, topo, dut, peer, expected_routes):
     """
     APi is verifies the the routes that are advertised from dut to peer
@@ -5467,7 +5504,7 @@ def verify_bgp_advertised_routes_from_neighbor(tgen, topo, dut, peer, expected_r
         return False
 
 
-@retry(retry_timeout=5)
+@retry(retry_timeout=30)
 def verify_bgp_received_routes_from_neighbor(tgen, topo, dut, peer, expected_routes):
     """
     API to verify the bgp received routes
@@ -5658,3 +5695,34 @@ def bgp_configure_prefixes(router, asn, safi, prefixes, vrf=None, update=True):
         ]
         logger.debug(f"setting prefix: ipv{ip.version} {safi} {ip}")
         router.vtysh_cmd("".join(cmd))
+
+
+# compare exact fields of 'show bgp ipv4 vpn' and related commands
+# after having removed some attributes that are not relevant.
+def bgp_vpn_router_json_cmp_exact_filter(router, cmd, expected):
+    output = router.vtysh_cmd(cmd)
+    logger.info("{}: {}\n{}".format(router.name, cmd, output))
+
+    json_output = json.loads(output)
+
+    # filter out tableVersion, version and nhVrfID
+    json_output.pop("tableVersion")
+    if "totalRoutes" in json_output:
+        json_output.pop("totalRoutes")
+    if "totalPaths" in json_output:
+        json_output.pop("totalPaths")
+    for rd, data in json_output["routes"]["routeDistinguishers"].items():
+        for _, attrs in data.items():
+            for attr in attrs:
+                if "nhVrfId" in attr:
+                    attr.pop("nhVrfId")
+                if "version" in attr:
+                    attr.pop("version")
+
+    # filter out RD with no data (e.g. "444:3": {})
+    json_tmp = deepcopy(json_output)
+    for rd, data in json_tmp["routes"]["routeDistinguishers"].items():
+        if len(data.keys()) == 0:
+            json_output["routes"]["routeDistinguishers"].pop(rd)
+
+    return topotest.json_cmp(json_output, expected, exact=True)

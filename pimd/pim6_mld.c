@@ -57,6 +57,8 @@ static void gm_sg_timer_start(struct gm_if *gm_ifp, struct gm_sg *sg,
 #define log_pkt_src(msg)                                                       \
 	"[MLD %s:%s %pI6] " msg, gm_ifp->ifp->vrf->name, gm_ifp->ifp->name,    \
 		&pkt_src->sin6_addr
+#define log_pkt_dst(msg)                                                       \
+	"[MLD %s:%s %pI6] " msg, gm_ifp->ifp->vrf->name, gm_ifp->ifp->name, pkt_dst
 #define log_sg(sg, msg)                                                        \
 	"[MLD %s:%s %pSG] " msg, sg->iface->ifp->vrf->name,                    \
 		sg->iface->ifp->name, &sg->sgaddr
@@ -268,6 +270,28 @@ static bool gm_sg_limit_reached(struct gm_if *gm_if, const pim_addr source, cons
 	return false;
 }
 
+static bool gm_sg_filter_match(const struct gm_if *gm_if, const pim_addr source,
+			       const pim_addr group)
+{
+	const struct pim_interface *pim_interface = gm_if->ifp->info;
+	const struct prefix_sg sg = {
+		.family = PIM_AF,
+		.src.ipa_type = IPADDR_V6,
+		.src.ipaddr_v6 = source,
+		.grp.ipa_type = IPADDR_V6,
+		.grp.ipaddr_v6 = group,
+	};
+
+	if (!pim_filter_match(&pim_interface->gmp_filter, &sg, gm_if->ifp)) {
+		if (PIM_DEBUG_GM_TRACE)
+			zlog_debug("%s: SG%pPSG on interface %s filtered due to route-map",
+				   __func__, &sg, gm_if->ifp->name);
+		return true;
+	}
+
+	return false;
+}
+
 /*
  * interface -> packets, sorted by expiry (because add_tail insert order)
  */
@@ -379,7 +403,7 @@ static void gm_sg_free(struct gm_sg *sg)
 		pim_embedded_rp_delete(sg->iface->pim, &sg->sgaddr.grp);
 
 	/* t_sg_expiry is handled before this is reached */
-	EVENT_OFF(sg->t_sg_query);
+	event_cancel(&sg->t_sg_query);
 	gm_packet_sg_subs_fini(sg->subs_negative);
 	gm_packet_sg_subs_fini(sg->subs_positive);
 	XFREE(MTYPE_GM_SG, sg);
@@ -410,6 +434,7 @@ static void gm_sg_update(struct gm_sg *sg, bool has_expired)
 	struct pim_interface *pim_ifp = gm_ifp->ifp->info;
 	enum gm_sg_state prev, desired;
 	bool new_join;
+	bool entry_filtered = false;
 	struct gm_sg *grp = NULL;
 
 	if (!pim_addr_is_any(sg->sgaddr.src))
@@ -439,13 +464,17 @@ static void gm_sg_update(struct gm_sg *sg, bool has_expired)
 	else
 		desired = GM_SG_NOINFO;
 
+	/* Check if entry is filtered by route maps */
+	if (gm_sg_filter_match(gm_ifp, sg->sgaddr.src, sg->sgaddr.grp))
+		entry_filtered = true;
+
 	if (desired != sg->state && !gm_ifp->stopping) {
 		if (PIM_DEBUG_GM_EVENTS)
 			zlog_debug(log_sg(sg, "%s => %s"), gm_states[sg->state],
 				   gm_states[desired]);
 
-		if (desired == GM_SG_JOIN_EXPIRING ||
-		    desired == GM_SG_NOPRUNE_EXPIRING) {
+		if (!entry_filtered &&
+		    (desired == GM_SG_JOIN_EXPIRING || desired == GM_SG_NOPRUNE_EXPIRING)) {
 			struct gm_query_timers timers;
 
 			if (!pim_ifp->gmp_immediate_leave) {
@@ -460,7 +489,7 @@ static void gm_sg_update(struct gm_sg *sg, bool has_expired)
 
 			gm_sg_timer_start(gm_ifp, sg, timers.expire_wait);
 
-			EVENT_OFF(sg->t_sg_query);
+			event_cancel(&sg->t_sg_query);
 			sg->query_sbit = false;
 			/* Trigger the specific queries only for querier. */
 			if (!pim_ifp->gmp_immediate_leave &&
@@ -478,7 +507,7 @@ static void gm_sg_update(struct gm_sg *sg, bool has_expired)
 	else
 		new_join = gm_sg_state_want_join(desired);
 
-	if (new_join && !sg->tib_joined) {
+	if (new_join && !sg->tib_joined && !entry_filtered) {
 		pim_addr embedded_rp;
 
 		if (sg->iface->pim->embedded_rp.enable &&
@@ -517,7 +546,7 @@ static void gm_sg_update(struct gm_sg *sg, bool has_expired)
 		 * another path.
 		 */
 		if (has_expired)
-			EVENT_OFF(sg->t_sg_expire);
+			event_cancel(&sg->t_sg_expire);
 
 		assertf((!sg->t_sg_expire &&
 			 !gm_packet_sg_subs_count(sg->subs_positive) &&
@@ -596,6 +625,7 @@ static bool gm_packet_sg_drop(struct gm_packet_sg *item)
 			continue;
 
 		gm_packet_sg_subs_del(excl_item->sg->subs_negative, excl_item);
+		gm_sg_update(excl_item->sg, true);
 		excl_item->sg = NULL;
 		pkt->n_active--;
 
@@ -663,7 +693,7 @@ static void gm_sg_expiry_cancel(struct gm_sg *sg)
 {
 	if (sg->t_sg_expire && PIM_DEBUG_GM_TRACE)
 		zlog_debug(log_sg(sg, "alive, cancelling expiry timer"));
-	EVENT_OFF(sg->t_sg_expire);
+	event_cancel(&sg->t_sg_expire);
 	sg->query_sbit = true;
 }
 
@@ -701,6 +731,8 @@ static void gm_handle_v2_pass1(struct gm_packet_state *pkt,
 		/* this always replaces or creates state */
 		is_excl = true;
 		if (!grp) {
+			if (gm_sg_filter_match(pkt->iface, PIMADDR_ANY, rechdr->grp))
+				return;
 			if (gm_sg_limit_reached(pkt->iface, PIMADDR_ANY, rechdr->grp))
 				return;
 
@@ -771,6 +803,8 @@ static void gm_handle_v2_pass1(struct gm_packet_state *pkt,
 
 		sg = gm_sg_find(pkt->iface, rechdr->grp, rechdr->srcs[j]);
 		if (!sg) {
+			if (gm_sg_filter_match(pkt->iface, rechdr->srcs[j], rechdr->grp))
+				return;
 			if (gm_sg_limit_reached(pkt->iface, rechdr->srcs[j], rechdr->grp))
 				return;
 
@@ -795,11 +829,13 @@ static void gm_handle_v2_pass2_incl(struct gm_packet_state *pkt, size_t i)
 	/* EXCLUDE state was already dropped in pass1 */
 	assert(!gm_packet_sg_find(sg, GM_SUB_NEG, pkt->subscriber));
 
+	/* if repeated MLD records are in a packet, pkt == old is possible */
+	pkt->n_active++;
+
 	old = gm_packet_sg_find(sg, GM_SUB_POS, pkt->subscriber);
 	if (old)
 		gm_packet_sg_drop(old);
 
-	pkt->n_active++;
 	gm_packet_sg_subs_add(sg->subs_positive, item);
 
 	sg->most_recent = item;
@@ -813,6 +849,9 @@ static void gm_handle_v2_pass2_excl(struct gm_packet_state *pkt, size_t offs)
 	struct gm_packet_sg *old_grp, *item_dup;
 	struct gm_sg *sg_grp = item->sg;
 	size_t i;
+
+	/* if repeated MLD records are in a packet, pkt == old is possible */
+	pkt->n_active++;
 
 	old_grp = gm_packet_sg_find(sg_grp, GM_SUB_POS, pkt->subscriber);
 	if (old_grp) {
@@ -858,7 +897,6 @@ static void gm_handle_v2_pass2_excl(struct gm_packet_state *pkt, size_t offs)
 
 	item_dup = gm_packet_sg_subs_add(sg_grp->subs_positive, item);
 	assert(!item_dup);
-	pkt->n_active++;
 
 	sg_grp->most_recent = item;
 	gm_sg_expiry_cancel(sg_grp);
@@ -1004,9 +1042,8 @@ static void gm_handle_v2_report(struct gm_if *gm_ifp,
 		gm_packet_free(pkt);
 }
 
-static void gm_handle_v1_report(struct gm_if *gm_ifp,
-				const struct sockaddr_in6 *pkt_src, char *data,
-				size_t len)
+static void gm_handle_v1_report(struct gm_if *gm_ifp, const struct sockaddr_in6 *pkt_src,
+				pim_addr *pkt_dst, char *data, size_t len)
 {
 	struct mld_v1_pkt *hdr;
 	struct gm_packet_state *pkt;
@@ -1025,6 +1062,17 @@ static void gm_handle_v1_report(struct gm_if *gm_ifp,
 	gm_ifp->stats.rx_old_report++;
 
 	hdr = (struct mld_v1_pkt *)data;
+	if (pim_addr_cmp(hdr->grp, *pkt_dst)) {
+		if (PIM_DEBUG_GM_PACKETS)
+			zlog_debug(log_pkt_dst(
+					   "malformed MLDv1 report (destination address should be %pI6)"),
+				   &hdr->grp);
+		gm_ifp->stats.rx_drop_malformed++;
+		return;
+	}
+
+	if (gm_sg_filter_match(gm_ifp, PIMADDR_ANY, hdr->grp))
+		return;
 
 	if (!gm_sg_has_group(gm_ifp->sgs, hdr->grp) &&
 	    gm_sg_limit_reached(gm_ifp, PIMADDR_ANY, hdr->grp))
@@ -1221,7 +1269,7 @@ static void gm_handle_q_general(struct gm_if *gm_ifp,
 
 		gm_ifp->n_pending--;
 		if (!gm_ifp->n_pending)
-			EVENT_OFF(gm_ifp->t_expire);
+			event_cancel(&gm_ifp->t_expire);
 	}
 
 	/* people might be messing with their configs or something */
@@ -1330,7 +1378,7 @@ static void gm_sg_timer_start(struct gm_if *gm_ifp, struct gm_sg *sg,
 		if (timercmp(&remain, &expire_wait, <=))
 			return;
 
-		EVENT_OFF(sg->t_sg_expire);
+		event_cancel(&sg->t_sg_expire);
 	}
 
 	event_add_timer_tv(router->master, gm_t_sg_expire, sg, &expire_wait,
@@ -1391,7 +1439,7 @@ static void gm_t_grp_expire(struct event *t)
 		 * parallel.  But if we received nothing for the *,G query,
 		 * the S,G query is kinda irrelevant.
 		 */
-		EVENT_OFF(sg->t_sg_expire);
+		event_cancel(&sg->t_sg_expire);
 
 		frr_each_safe (gm_packet_sg_subs, sg->subs_positive, item)
 			/* this will also drop the EXCLUDE S,G lists */
@@ -1443,7 +1491,7 @@ static void gm_handle_q_group(struct gm_if *gm_ifp,
 		if (timercmp(&remain, &timers->expire_wait, <=))
 			return;
 
-		EVENT_OFF(pend->t_expire);
+		event_cancel(&pend->t_expire);
 	} else {
 		pend = XCALLOC(MTYPE_GM_GRP_PENDING, sizeof(*pend));
 		pend->grp = grp;
@@ -1464,7 +1512,7 @@ static void gm_bump_querier(struct gm_if *gm_ifp)
 {
 	struct pim_interface *pim_ifp = gm_ifp->ifp->info;
 
-	EVENT_OFF(gm_ifp->t_query);
+	event_cancel(&gm_ifp->t_query);
 
 	if (pim_addr_is_any(pim_ifp->ll_lowest))
 		return;
@@ -1589,8 +1637,8 @@ static void gm_handle_query(struct gm_if *gm_ifp,
 	if (IPV6_ADDR_CMP(&pkt_src->sin6_addr, &pim_ifp->ll_lowest) < 0) {
 		unsigned int other_ms;
 
-		EVENT_OFF(gm_ifp->t_query);
-		EVENT_OFF(gm_ifp->t_other_querier);
+		event_cancel(&gm_ifp->t_query);
+		event_cancel(&gm_ifp->t_other_querier);
 
 		other_ms = timers.qrv * timers.qqic_ms + timers.max_resp_ms / 2;
 		event_add_timer_msec(router->master, gm_t_other_querier, gm_ifp,
@@ -1670,7 +1718,7 @@ static void gm_rx_process(struct gm_if *gm_ifp,
 		gm_handle_query(gm_ifp, pkt_src, pkt_dst, data, pktlen);
 		break;
 	case ICMP6_MLD_V1_REPORT:
-		gm_handle_v1_report(gm_ifp, pkt_src, data, pktlen);
+		gm_handle_v1_report(gm_ifp, pkt_src, pkt_dst, data, pktlen);
 		break;
 	case ICMP6_MLD_V1_DONE:
 		gm_handle_v1_leave(gm_ifp, pkt_src, data, pktlen);
@@ -1770,18 +1818,6 @@ static void gm_t_recv(struct event *t)
 		goto out_free;
 	}
 
-	struct interface *ifp;
-
-	ifp = if_lookup_by_index(pkt_src->sin6_scope_id, pim->vrf->vrf_id);
-	if (!ifp || !ifp->info)
-		goto out_free;
-
-	struct pim_interface *pim_ifp = ifp->info;
-	struct gm_if *gm_ifp = pim_ifp->mld;
-
-	if (!gm_ifp)
-		goto out_free;
-
 	for (cmsg = CMSG_FIRSTHDR(mh); cmsg; cmsg = CMSG_NXTHDR(mh, cmsg)) {
 		if (cmsg->cmsg_level != SOL_IPV6)
 			continue;
@@ -1800,6 +1836,21 @@ static void gm_t_recv(struct event *t)
 		}
 	}
 
+	/* Prefer pktinfo as that also works in case of VRF */
+	ifindex_t ifindex = pktinfo ? pktinfo->ipi6_ifindex
+	                            : pkt_src->sin6_scope_id;
+	struct interface *ifp;
+
+	ifp = if_lookup_by_index(ifindex, pim->vrf->vrf_id);
+	if (!ifp || !ifp->info)
+		goto out_free;
+
+	struct pim_interface *pim_ifp = ifp->info;
+	struct gm_if *gm_ifp = pim_ifp->mld;
+
+	if (!gm_ifp)
+		goto out_free;
+
 	if (!pktinfo || !hoplimit) {
 		zlog_err(log_ifp(
 			"BUG: packet without IPV6_PKTINFO or IPV6_HOPLIMIT"));
@@ -1814,7 +1865,7 @@ static void gm_t_recv(struct event *t)
 		goto out_free;
 	}
 
-	if (!ip6_check_hopopts_ra(hopopts, hopopt_len, IP6_ALERT_MLD)) {
+	if (pim_ifp->gmp_require_ra && !ip6_check_hopopts_ra(hopopts, hopopt_len, IP6_ALERT_MLD)) {
 		zlog_err(log_pkt_src(
 			"packet without IPv6 Router Alert MLD option"));
 		gm_ifp->stats.rx_drop_ra++;
@@ -2090,7 +2141,7 @@ static void gm_trigger_specific(struct gm_sg *sg)
 	pend_gsq->n_src++;
 
 	if (pend_gsq->n_src == array_size(pend_gsq->srcs)) {
-		EVENT_OFF(pend_gsq->t_send);
+		event_cancel(&pend_gsq->t_send);
 		gm_send_specific(pend_gsq);
 		pend_gsq = NULL;
 	}
@@ -2196,7 +2247,7 @@ static void gm_vrf_socket_decref(struct pim_instance *pim)
 	if (--pim->gm_socket_if_count)
 		return;
 
-	EVENT_OFF(pim->t_gm_recv);
+	event_cancel(&pim->t_gm_recv);
 	close(pim->gm_socket);
 	pim->gm_socket = -1;
 }
@@ -2269,17 +2320,17 @@ void gm_group_delete(struct gm_if *gm_ifp)
 		gm_packet_drop(pkt, false);
 
 	while ((pend_grp = gm_grp_pends_pop(gm_ifp->grp_pends))) {
-		EVENT_OFF(pend_grp->t_expire);
+		event_cancel(&pend_grp->t_expire);
 		XFREE(MTYPE_GM_GRP_PENDING, pend_grp);
 	}
 
 	while ((pend_gsq = gm_gsq_pends_pop(gm_ifp->gsq_pends))) {
-		EVENT_OFF(pend_gsq->t_send);
+		event_cancel(&pend_gsq->t_send);
 		XFREE(MTYPE_GM_GSQ_PENDING, pend_gsq);
 	}
 
 	while ((sg = gm_sgs_pop(gm_ifp->sgs))) {
-		EVENT_OFF(sg->t_sg_expire);
+		event_cancel(&sg->t_sg_expire);
 		assertf(!gm_packet_sg_subs_count(sg->subs_negative), "%pSG",
 			&sg->sgaddr);
 		assertf(!gm_packet_sg_subs_count(sg->subs_positive), "%pSG",
@@ -2307,9 +2358,9 @@ void gm_ifp_teardown(struct interface *ifp)
 	if (PIM_DEBUG_GM_EVENTS)
 		zlog_debug(log_ifp("MLD stop"));
 
-	EVENT_OFF(gm_ifp->t_query);
-	EVENT_OFF(gm_ifp->t_other_querier);
-	EVENT_OFF(gm_ifp->t_expire);
+	event_cancel(&gm_ifp->t_query);
+	event_cancel(&gm_ifp->t_other_querier);
+	event_cancel(&gm_ifp->t_expire);
 
 	frr_with_privs (&pimd_privs) {
 		struct ipv6_mreq mreq;
@@ -2352,7 +2403,7 @@ static void gm_update_ll(struct interface *ifp)
 	gm_ifp->cur_ll_lowest = pim_ifp->ll_lowest;
 	if (was_querier)
 		gm_ifp->querier = pim_ifp->ll_lowest;
-	EVENT_OFF(gm_ifp->t_query);
+	event_cancel(&gm_ifp->t_query);
 
 	if (pim_addr_is_any(gm_ifp->cur_ll_lowest)) {
 		if (was_querier)

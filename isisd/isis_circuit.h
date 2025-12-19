@@ -200,7 +200,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 			   struct connected *conn);
 void isis_circuit_prepare(struct isis_circuit *circuit);
 int isis_circuit_up(struct isis_circuit *circuit);
-void isis_circuit_down(struct isis_circuit *);
+void isis_circuit_down(struct isis_circuit *circuit);
 void circuit_update_nlpids(struct isis_circuit *circuit);
 void isis_circuit_print_vty(struct isis_circuit *circuit, struct vty *vty,
 			    char detail);
@@ -231,6 +231,9 @@ ferr_r isis_circuit_passwd_hmac_md5_set(struct isis_circuit *circuit,
 
 int isis_circuit_mt_enabled_set(struct isis_circuit *circuit, uint16_t mtid,
 				bool enabled);
+
+/* Reset ISIS hello timer and send immediate hello */
+void isis_reset_hello_timer(struct isis_circuit *circuit);
 
 #ifdef FABRICD
 DECLARE_HOOK(isis_circuit_config_write,

@@ -63,6 +63,7 @@
 #include "zebra/zebra_l2.h"
 #include "zebra/netconf_netlink.h"
 #include "zebra/zebra_trace.h"
+#include "lib/netlink_parser.h"
 
 extern struct zebra_privs_t zserv_privs;
 
@@ -219,8 +220,14 @@ static void netlink_determine_zebra_iftype(const char *kind,
 		*zif_type = ZEBRA_IF_BOND;
 	else if (strcmp(kind, "team") == 0)
 		*zif_type = ZEBRA_IF_BOND;
+	else if (strcmp(kind, "gretap") == 0)
+		*zif_type = ZEBRA_IF_GRETAP;
+	else if (strcmp(kind, "ip6gretap") == 0)
+		*zif_type = ZEBRA_IF_IP6GRETAP;
 	else if (strcmp(kind, "gre") == 0)
 		*zif_type = ZEBRA_IF_GRE;
+	else if (strcmp(kind, "ip6gre") == 0)
+		*zif_type = ZEBRA_IF_IP6GRE;
 	else if (strcmp(kind, "dummy") == 0)
 		*zif_type = ZEBRA_IF_DUMMY;
 }
@@ -476,7 +483,6 @@ static int netlink_extract_vxlan_info(struct rtattr *link_data,
 	uint8_t svd = 0;
 	struct rtattr *attr[IFLA_VXLAN_MAX + 1];
 	vni_t vni_in_msg;
-	struct in_addr vtep_ip_in_msg;
 	ifindex_t ifindex_link;
 
 	memset(vxl_info, 0, sizeof(*vxl_info));
@@ -508,14 +514,24 @@ static int netlink_extract_vxlan_info(struct rtattr *link_data,
 		vxl_info->vni_info.iftype = ZEBRA_VXLAN_IF_SVD;
 	}
 
-	if (!attr[IFLA_VXLAN_LOCAL]) {
+
+	if (attr[IFLA_VXLAN_LOCAL]) {
+		vxl_info->vtep_ip.ipaddr_v4 = *(struct in_addr *)RTA_DATA(attr[IFLA_VXLAN_LOCAL]);
+		SET_IPADDR_V4(&vxl_info->vtep_ip);
+		if (IS_ZEBRA_DEBUG_KERNEL)
+			zlog_debug("IFLA_VXLAN_LOCAL VXLAN IF message, local address V4: %pIA",
+				   &vxl_info->vtep_ip);
+	} else if (attr[IFLA_VXLAN_LOCAL6]) {
+		IPV6_ADDR_COPY(&vxl_info->vtep_ip.ipaddr_v6,
+			       (struct in6_addr *)RTA_DATA(attr[IFLA_VXLAN_LOCAL6]));
+		SET_IPADDR_V6(&vxl_info->vtep_ip);
+		if (IS_ZEBRA_DEBUG_KERNEL)
+			zlog_debug("IFLA_VXLAN_LOCAL VXLAN IF message, local address V6: %pIA",
+				   &vxl_info->vtep_ip);
+	} else {
 		if (IS_ZEBRA_DEBUG_KERNEL)
 			zlog_debug(
 				"IFLA_VXLAN_LOCAL missing from VXLAN IF message");
-	} else {
-		vtep_ip_in_msg =
-			*(struct in_addr *)RTA_DATA(attr[IFLA_VXLAN_LOCAL]);
-		vxl_info->vtep_ip = vtep_ip_in_msg;
 	}
 
 	if (attr[IFLA_VXLAN_GROUP]) {
@@ -569,6 +585,9 @@ static void netlink_interface_update_l2info(struct zebra_dplane_ctx *ctx,
 		dplane_ctx_set_ifp_vxlan_info(ctx, &vxlan_info);
 		break;
 	case ZEBRA_IF_GRE:
+	case ZEBRA_IF_IP6GRE:
+	case ZEBRA_IF_GRETAP:
+	case ZEBRA_IF_IP6GRETAP:
 		netlink_extract_gre_info(link_data, &gre_info);
 		gre_info.link_nsid = link_nsid;
 		dplane_ctx_set_ifp_gre_info(ctx, &gre_info);
@@ -638,6 +657,9 @@ netlink_bridge_vxlan_vlan_vni_map_update(struct zebra_dplane_ctx *ctx,
 	if (count) {
 		vniarray->count = count;
 		dplane_ctx_set_ifp_vxlan_vni_array(ctx, vniarray);
+	} else if (vniarray) {
+		/* Free allocated memory if count is 0 */
+		XFREE(MTYPE_TMP, vniarray);
 	}
 	return 0;
 }
@@ -705,6 +727,9 @@ static void netlink_bridge_vlan_update(struct zebra_dplane_ctx *ctx,
 	if (count) {
 		bvarray->count = count;
 		dplane_ctx_set_ifp_bridge_vlan_info_array(ctx, bvarray);
+	} else if (bvarray) {
+		/* Free allocated memory if count is 0 */
+		XFREE(MTYPE_TMP, bvarray);
 	}
 }
 
@@ -787,8 +812,8 @@ static int netlink_request_intf_addr(struct nlsock *netlink_cmd, int family,
 	req.ifm.ifi_family = family;
 
 	/* Include filter, if specified. */
-	if (filter_mask)
-		nl_attr_put32(&req.n, sizeof(req), IFLA_EXT_MASK, filter_mask);
+	if (filter_mask && !nl_attr_put32(&req.n, sizeof(req), IFLA_EXT_MASK, filter_mask))
+		return -1;
 
 	return netlink_request(netlink_cmd, &req);
 }
@@ -917,8 +942,14 @@ int kernel_interface_set_master(struct interface *master,
 
 	req.ifa.ifi_index = slave->ifindex;
 
-	nl_attr_put32(&req.n, sizeof(req), IFLA_MASTER, master->ifindex);
-	nl_attr_put32(&req.n, sizeof(req), IFLA_LINK, slave->ifindex);
+	if (!nl_attr_put32(&req.n, sizeof(req), IFLA_MASTER, master->ifindex)) {
+		zlog_err("%s: failed to encode IFLA_MASTER nl attribute", __func__);
+		return -1;
+	}
+	if (!nl_attr_put32(&req.n, sizeof(req), IFLA_LINK, slave->ifindex)) {
+		zlog_err("%s: failed to encode IFLA_LINK nl attribute", __func__);
+		return -1;
+	}
 
 	return netlink_talk(netlink_talk_filter, &req.n, &zns->netlink_cmd, zns,
 			    false);
@@ -1272,8 +1303,9 @@ int netlink_link_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 
 	if (!(h->nlmsg_type == RTM_NEWLINK || h->nlmsg_type == RTM_DELLINK)) {
 		/* If this is not link add/delete message so print warning. */
-		zlog_debug("%s: wrong kernel message %s", __func__,
-			   nl_msg_type_to_str(h->nlmsg_type));
+		if (IS_ZEBRA_DEBUG_KERNEL)
+			zlog_debug("%s: wrong kernel message %s", __func__,
+				   nl_msg_type_to_str(h->nlmsg_type));
 		return 0;
 	}
 
@@ -1494,21 +1526,24 @@ ssize_t netlink_intf_msg_encode(uint16_t cmd,
 
 	req->ifa.ifi_index = ifindex;
 
-	nl_attr_put8(&req->n, buflen, IFLA_PROTO_DOWN, down);
-	nl_attr_put32(&req->n, buflen, IFLA_LINK, ifindex);
+	if (!nl_attr_put8(&req->n, buflen, IFLA_PROTO_DOWN, down))
+		return 0;
+	if (!nl_attr_put32(&req->n, buflen, IFLA_LINK, ifindex))
+		return 0;
 
 	/* Reason info nest */
 	nest_protodown_reason =
 		nl_attr_nest(&req->n, buflen, IFLA_PROTO_DOWN_REASON);
 
 	if (!nest_protodown_reason)
-		return -1;
+		return 0;
 
-	nl_attr_put32(&req->n, buflen, IFLA_PROTO_DOWN_REASON_MASK,
-		      (1 << if_netlink_get_frr_protodown_r_bit()));
-	nl_attr_put32(&req->n, buflen, IFLA_PROTO_DOWN_REASON_VALUE,
-		      ((int)pd_reason_val)
-			      << if_netlink_get_frr_protodown_r_bit());
+	if (!nl_attr_put32(&req->n, buflen, IFLA_PROTO_DOWN_REASON_MASK,
+			   (1 << if_netlink_get_frr_protodown_r_bit())))
+		return 0;
+	if (!nl_attr_put32(&req->n, buflen, IFLA_PROTO_DOWN_REASON_VALUE,
+			   ((int)pd_reason_val) << if_netlink_get_frr_protodown_r_bit()))
+		return 0;
 
 	nl_attr_nest_end(&req->n, nest_protodown_reason);
 
@@ -1749,8 +1784,13 @@ int netlink_vlan_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 				   bvm->ifindex, ns_id);
 
 		dplane_provider_enqueue_to_zebra(ctx);
-	} else
+	} else {
+		if (vlan_array) {
+			/* Free allocated memory if count is 0 */
+			XFREE(MTYPE_VLAN_CHANGE_ARR, vlan_array);
+		}
 		dplane_ctx_fini(&ctx);
+	}
 
 
 	return 0;
@@ -1779,8 +1819,12 @@ static int netlink_request_vlan(struct zebra_ns *zns, int family, int type)
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_vlan_msg));
 	req.bvm.family = family;
 
-	nl_attr_put32(&req.n, sizeof(req), BRIDGE_VLANDB_DUMP_FLAGS,
-		      BRIDGE_VLANDB_DUMPF_STATS);
+	if (!nl_attr_put32(&req.n, sizeof(req), BRIDGE_VLANDB_DUMP_FLAGS,
+			   BRIDGE_VLANDB_DUMPF_STATS)) {
+		zlog_err("%s: Failed to put BRIDGE_VLANDB_DUMP_FLAGS nl attribute",
+			__func__);
+		return -1;
+	}
 
 	return netlink_request(&zns->netlink_cmd, &req);
 }

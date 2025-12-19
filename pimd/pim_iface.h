@@ -17,8 +17,10 @@
 
 #include "pim_igmp.h"
 #include "pim_upstream.h"
+#include "pim_ifchannel.h"
 #include "bfd.h"
 #include "pim_str.h"
+#include "pim_routemap.h"
 
 #define PIM_IF_IS_DELETED(ifp) ((ifp)->ifindex == IFINDEX_INTERNAL)
 
@@ -55,6 +57,16 @@ struct pim_secondary_addr {
 	enum pim_secondary_addr_flags flags;
 };
 
+enum pim_iface_mode {
+	PIM_MODE_SPARSE,
+	PIM_MODE_DENSE,
+	PIM_MODE_SPARSE_DENSE,
+	PIM_MODE_SSM
+};
+
+#define HAVE_DENSE_MODE(_mode)	(_mode == PIM_MODE_DENSE || _mode == PIM_MODE_SPARSE_DENSE)
+#define HAVE_SPARSE_MODE(_mode) (_mode == PIM_MODE_SPARSE || _mode == PIM_MODE_SPARSE_DENSE)
+
 struct gm_if;
 
 struct pim_interface {
@@ -67,6 +79,7 @@ struct pim_interface {
 
 	ifindex_t mroute_vif_index;
 	struct pim_instance *pim;
+	enum pim_iface_mode pim_mode;
 
 #if PIM_IPV == 6
 	/* link-locals: MLD uses lowest addr, PIM uses highest... */
@@ -97,6 +110,7 @@ struct pim_interface {
 	int gm_last_member_query_count;		      /* IGMP or MLD last member
 							 query count
 						       */
+	bool gmp_require_ra;			      /* drop IGMP without Router Alert */
 	struct list *gm_socket_list; /* list of struct IGMP or MLD sock */
 	struct list *gm_join_list;   /* list of struct IGMP or MLD join */
 	struct list *static_group_list; /* list of struct static group */
@@ -109,6 +123,9 @@ struct pim_interface {
 
 	/* IGMPv2 only/MLDv1 only immediate leave */
 	bool gmp_immediate_leave;
+
+	/* NB: multicast_rmap is only applied for (S,G) data */
+	struct pim_filter_ref gmp_filter;
 
 	int pim_sock_fd;		/* PIM socket file descriptor */
 	struct event *t_pim_sock_read;	/* thread for reading PIM socket */
@@ -158,6 +175,7 @@ struct pim_interface {
 	uint32_t pim_ifstat_join_recv;
 	uint32_t pim_ifstat_join_send;
 	uint32_t pim_ifstat_prune_recv;
+	uint32_t pim_ifstat_graft_recv;
 	uint32_t pim_ifstat_prune_send;
 	uint32_t pim_ifstat_reg_recv;
 	uint32_t pim_ifstat_reg_send;
@@ -262,5 +280,7 @@ int pim_if_ifchannel_count(struct pim_interface *pim_ifp);
 void pim_iface_init(void);
 void pim_pim_interface_delete(struct interface *ifp);
 void pim_gm_interface_delete(struct interface *ifp);
+
+const char *pim_mod_str(enum pim_iface_mode mode);
 
 #endif /* PIM_IFACE_H */

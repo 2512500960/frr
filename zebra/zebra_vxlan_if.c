@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Zebra EVPN for VxLAN interface handling
  *
  * Copyright (C) 2021 Cumulus Networks, Inc.
  * Vivek Venkatraman, Stephen Worley, Sharath Ramamurthy
- *
- * This file is part of FRR.
- *
- * FRR is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2, or (at your option) any
- * later version.
- *
- * FRR is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 
 #include <zebra.h>
@@ -53,6 +42,8 @@
 #include "zebra/zebra_evpn_mh.h"
 #include "zebra/zebra_evpn_vxlan.h"
 #include "zebra/zebra_router.h"
+
+DEFINE_MTYPE_STATIC(ZEBRA, L2_VNI, "L2 VNI");
 
 static unsigned int zebra_vxlan_vni_hash_keymake(const void *p)
 {
@@ -127,7 +118,7 @@ static int zebra_vxlan_if_del_vni(struct interface *ifp,
 		zebra_vxlan_process_l3vni_oper_down(zl3vni);
 
 		/* remove the association with vxlan_if */
-		memset(&zl3vni->local_vtep_ip, 0, sizeof(struct in_addr));
+		memset(&zl3vni->local_vtep_ip, 0, sizeof(zl3vni->local_vtep_ip));
 		zl3vni->vxlan_if = NULL;
 		zl3vni->vid = 0;
 		br_if = zif->brslave_info.br_if;
@@ -201,11 +192,9 @@ static int zebra_vxlan_if_update_vni(struct interface *ifp,
 	if (zl3vni) {
 
 		if (IS_ZEBRA_DEBUG_VXLAN)
-			zlog_debug(
-				"Update L3-VNI %u intf %s(%u) VLAN %u local IP %pI4 master %u chg 0x%x",
-				vni, ifp->name, ifp->ifindex, vnip->access_vlan,
-				&vxl->vtep_ip, zif->brslave_info.bridge_ifindex,
-				chgflags);
+			zlog_debug("Update L3-VNI %u intf %s(%u) VLAN %u local IP %pIA master %u chg 0x%x",
+				   vni, ifp->name, ifp->ifindex, vnip->access_vlan, &vxl->vtep_ip,
+				   zif->brslave_info.bridge_ifindex, chgflags);
 
 		/* Removed from bridge? Cleanup and return */
 		if (CHECK_FLAG(chgflags, ZEBRA_VXLIF_MASTER_CHANGE) &&
@@ -278,11 +267,9 @@ static int zebra_vxlan_if_update_vni(struct interface *ifp,
 		}
 
 		if (IS_ZEBRA_DEBUG_VXLAN)
-			zlog_debug(
-				"Update L2-VNI %u intf %s(%u) VLAN %u local IP %pI4 master %u chg 0x%x",
-				vni, ifp->name, ifp->ifindex, vnip->access_vlan,
-				&vxl->vtep_ip, zif->brslave_info.bridge_ifindex,
-				chgflags);
+			zlog_debug("Update L2-VNI %u intf %s(%u) VLAN %u local IP %pIA master %u chg 0x%x",
+				   vni, ifp->name, ifp->ifindex, vnip->access_vlan, &vxl->vtep_ip,
+				   zif->brslave_info.bridge_ifindex, chgflags);
 
 		/* Removed from bridge? Cleanup and return */
 		if (CHECK_FLAG(chgflags, ZEBRA_VXLIF_MASTER_CHANGE) &&
@@ -310,11 +297,10 @@ static int zebra_vxlan_if_update_vni(struct interface *ifp,
 			vnip->access_vlan = access_vlan;
 		}
 
-		if (zevpn->local_vtep_ip.s_addr != vxl->vtep_ip.s_addr ||
-		    zevpn->mcast_grp.s_addr != vnip->mcast_grp.s_addr) {
-			zebra_vxlan_sg_deref(zevpn->local_vtep_ip,
-					     zevpn->mcast_grp);
-			zebra_vxlan_sg_ref(vxl->vtep_ip, vnip->mcast_grp);
+		if (!ipaddr_is_same(&zevpn->local_vtep_ip, &vxl->vtep_ip) ||
+		    !IPV4_ADDR_SAME(&zevpn->mcast_grp, &vnip->mcast_grp)) {
+			zebra_vxlan_sg_deref(&zevpn->local_vtep_ip, zevpn->mcast_grp);
+			zebra_vxlan_sg_ref(&vxl->vtep_ip, vnip->mcast_grp);
 			zevpn->local_vtep_ip = vxl->vtep_ip;
 			zevpn->mcast_grp = vnip->mcast_grp;
 			/* on local vtep-ip check if ES orig-ip
@@ -395,11 +381,9 @@ static int zebra_vxlan_if_add_vni(struct interface *ifp,
 
 		/* process if-add for l3-vni*/
 		if (IS_ZEBRA_DEBUG_VXLAN)
-			zlog_debug(
-				"Add L3-VNI %u intf %s(%u) VLAN %u local IP %pI4 master %u",
-				vni, ifp->name, ifp->ifindex, vnip->access_vlan,
-				&vxl->vtep_ip,
-				zif->brslave_info.bridge_ifindex);
+			zlog_debug("Add L3-VNI %u intf %s(%u) VLAN %u local IP %pIA master %u", vni,
+				   ifp->name, ifp->ifindex, vnip->access_vlan, &vxl->vtep_ip,
+				   zif->brslave_info.bridge_ifindex);
 
 		/* associate with vxlan_if */
 		zl3vni->local_vtep_ip = vxl->vtep_ip;
@@ -429,11 +413,10 @@ static int zebra_vxlan_if_add_vni(struct interface *ifp,
 		if (!zevpn)
 			zevpn = zebra_evpn_add(vni);
 
-		if (zevpn->local_vtep_ip.s_addr != vxl->vtep_ip.s_addr ||
-		    zevpn->mcast_grp.s_addr != vnip->mcast_grp.s_addr) {
-			zebra_vxlan_sg_deref(zevpn->local_vtep_ip,
-					     zevpn->mcast_grp);
-			zebra_vxlan_sg_ref(vxl->vtep_ip, vnip->mcast_grp);
+		if (!ipaddr_is_same(&zevpn->local_vtep_ip, &vxl->vtep_ip) ||
+		    !IPV4_ADDR_SAME(&zevpn->mcast_grp, &vnip->mcast_grp)) {
+			zebra_vxlan_sg_deref(&zevpn->local_vtep_ip, zevpn->mcast_grp);
+			zebra_vxlan_sg_ref(&vxl->vtep_ip, vnip->mcast_grp);
 			zevpn->local_vtep_ip = vxl->vtep_ip;
 			zevpn->mcast_grp = vnip->mcast_grp;
 			/* on local vtep-ip check if ES orig-ip
@@ -455,13 +438,10 @@ static int zebra_vxlan_if_add_vni(struct interface *ifp,
 		}
 
 		if (IS_ZEBRA_DEBUG_VXLAN)
-			zlog_debug(
-				"Add L2-VNI %u VRF %s intf %s(%u) VLAN %u local IP %pI4 mcast_grp %pI4 master %u",
-				vni,
-				vlan_if ? vlan_if->vrf->name : VRF_DEFAULT_NAME,
-				ifp->name, ifp->ifindex, vnip->access_vlan,
-				&vxl->vtep_ip, &vnip->mcast_grp,
-				zif->brslave_info.bridge_ifindex);
+			zlog_debug("Add L2-VNI %u VRF %s intf %s(%u) VLAN %u local IP %pIA mcast_grp %pI4 master %u",
+				   vni, vlan_if ? vlan_if->vrf->name : VRF_DEFAULT_NAME, ifp->name,
+				   ifp->ifindex, vnip->access_vlan, &vxl->vtep_ip, &vnip->mcast_grp,
+				   zif->brslave_info.bridge_ifindex);
 
 		/* If down or not mapped to a bridge, we're done. */
 		if (!if_is_operative(ifp) || !zif->brslave_info.br_if)
@@ -527,11 +507,7 @@ static int zebra_vxlan_if_add_update_vni(struct zebra_if *zif,
 				   old_vni->access_vlan, vni->vni,
 				   vni->access_vlan);
 
-		zebra_evpn_vl_vxl_deref(old_vni->access_vlan, old_vni->vni,
-					zif);
-		zebra_evpn_vl_vxl_ref(vni->access_vlan, vni->vni, zif);
-		zebra_vxlan_if_update_vni(zif->ifp, vni, ctx);
-		zebra_vxlan_vni_free(old_vni);
+
 	} else {
 		int ret;
 
@@ -544,18 +520,19 @@ static int zebra_vxlan_if_add_update_vni(struct zebra_if *zif,
 			if (IS_ZEBRA_DEBUG_VXLAN)
 				zlog_debug("%s vxlan %s vni %u has error accessing bridge table.",
 					   __func__, zif->ifp->name, vni->vni);
+
+			return 0;
 		} else if (ret == 0) {
 			if (IS_ZEBRA_DEBUG_VXLAN)
 				zlog_debug("%s vxlan %s vni (%u, %u) not present in bridge table",
-					   __func__, zif->ifp->name, vni->vni,
-					   vni->access_vlan);
-			zebra_evpn_vl_vxl_deref(old_vni->access_vlan,
-						old_vni->vni, zif);
-			zebra_evpn_vl_vxl_ref(vni->access_vlan, vni->vni, zif);
-			zebra_vxlan_if_update_vni(zif->ifp, vni, ctx);
-			zebra_vxlan_vni_free(old_vni);
+					   __func__, zif->ifp->name, vni->vni, vni->access_vlan);
 		}
 	}
+
+	zebra_evpn_vl_vxl_deref(old_vni->access_vlan, old_vni->vni, zif);
+	zebra_evpn_vl_vxl_ref(vni->access_vlan, vni->vni, zif);
+	zebra_vxlan_if_update_vni(zif->ifp, vni, ctx);
+	zebra_vxlan_vni_free(old_vni);
 
 	return 0;
 }
@@ -608,7 +585,7 @@ void zebra_vxlan_vni_free(void *arg)
 
 	vni = (struct zebra_vxlan_vni *)arg;
 
-	XFREE(MTYPE_TMP, vni);
+	XFREE(MTYPE_L2_VNI, vni);
 }
 
 void *zebra_vxlan_vni_alloc(void *p)
@@ -617,7 +594,7 @@ void *zebra_vxlan_vni_alloc(void *p)
 	const struct zebra_vxlan_vni *vnip;
 
 	vnip = (const struct zebra_vxlan_vni *)p;
-	vni = XCALLOC(MTYPE_TMP, sizeof(*vni));
+	vni = XCALLOC(MTYPE_L2_VNI, sizeof(*vni));
 	vni->vni = vnip->vni;
 	vni->access_vlan = vnip->access_vlan;
 	vni->mcast_grp = vnip->mcast_grp;
@@ -659,8 +636,6 @@ int zebra_vxlan_if_vni_table_create(struct zebra_if *zif)
 
 	vni_info = VNI_INFO_FROM_ZEBRA_IF(zif);
 	vni_info->vni_table = zebra_vxlan_vni_table_create();
-	if (!vni_info->vni_table)
-		return -ENOMEM;
 
 	return 0;
 }

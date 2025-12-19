@@ -187,12 +187,12 @@ struct isis *isis_lookup_by_sysid(const uint8_t *sysid)
 	return NULL;
 }
 
-void isis_master_init(struct event_loop *master)
+void isis_master_init(struct event_loop *mst)
 {
 	memset(&isis_master, 0, sizeof(isis_master));
 	im = &isis_master;
 	im->isis = list_new();
-	im->master = master;
+	im->master = mst;
 }
 
 void isis_master_terminate(void)
@@ -587,10 +587,10 @@ void isis_area_destroy(struct isis_area *area)
 
 	if (area->spf_timer[0])
 		isis_spf_timer_free(EVENT_ARG(area->spf_timer[0]));
-	EVENT_OFF(area->spf_timer[0]);
+	event_cancel(&area->spf_timer[0]);
 	if (area->spf_timer[1])
 		isis_spf_timer_free(EVENT_ARG(area->spf_timer[1]));
-	EVENT_OFF(area->spf_timer[1]);
+	event_cancel(&area->spf_timer[1]);
 
 	spf_backoff_free(area->spf_delay_ietf[0]);
 	spf_backoff_free(area->spf_delay_ietf[1]);
@@ -624,10 +624,10 @@ void isis_area_destroy(struct isis_area *area)
 	isis_lfa_tiebreakers_clear(area, ISIS_LEVEL1);
 	isis_lfa_tiebreakers_clear(area, ISIS_LEVEL2);
 
-	EVENT_OFF(area->t_tick);
-	EVENT_OFF(area->t_lsp_refresh[0]);
-	EVENT_OFF(area->t_lsp_refresh[1]);
-	EVENT_OFF(area->t_rlfa_rib_update);
+	event_cancel(&area->t_tick);
+	event_cancel(&area->t_lsp_refresh[0]);
+	event_cancel(&area->t_lsp_refresh[1]);
+	event_cancel(&area->t_rlfa_rib_update);
 
 	event_cancel_event(master, area);
 
@@ -704,24 +704,24 @@ static void isis_set_redist_vrf_bitmaps(struct isis *isis, bool set)
 						if (type == DEFAULT_ROUTE) {
 							if (set)
 								vrf_bitmap_set(
-									&zclient->default_information
+									&isis_zclient->default_information
 										 [afi],
 									isis->vrf_id);
 							else
 								vrf_bitmap_unset(
-									&zclient->default_information
+									&isis_zclient->default_information
 										 [afi],
 									isis->vrf_id);
 						} else {
 							if (set)
 								vrf_bitmap_set(
-									&zclient->redist
+									&isis_zclient->redist
 										 [afi]
 										 [type],
 									isis->vrf_id);
 							else
 								vrf_bitmap_unset(
-									&zclient->redist
+									&isis_zclient->redist
 										 [afi]
 										 [type],
 									isis->vrf_id);
@@ -1656,53 +1656,61 @@ DEFUN(clear_isis_neighbor_arg,
 	return clear_isis_neighbor_common(vty, id, vrf_name, all_vrf);
 }
 
-/*
- * 'isis debug', 'show debugging'
- */
-void print_debug(struct vty *vty, int flags, int onoff)
+void print_debug_line(struct vty *vty, const char *config, int onoff, bool indent)
 {
 	const char *onoffs = onoff ? "on" : "off";
 
+	if (indent)
+		vty_out(vty, "  %s %s debugging is %s\n", PROTO_NICE_NAME, config, onoffs);
+	else
+		vty_out(vty, "%s %s debugging is %s\n", PROTO_NICE_NAME, config, onoffs);
+}
+
+/*
+ * 'show debugging'
+ */
+void print_debug_with_indentation(struct vty *vty, int flags, int onoff, bool indent)
+{
 	if (flags & DEBUG_ADJ_PACKETS)
-		vty_out(vty,
-			"IS-IS Adjacency related packets debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "Adjacency related packets", onoff, indent);
 	if (flags & DEBUG_TX_QUEUE)
-		vty_out(vty, "IS-IS TX queue debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "TX queue", onoff, indent);
 	if (flags & DEBUG_SNP_PACKETS)
-		vty_out(vty, "IS-IS CSNP/PSNP packets debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "CSNP/PSNP packets", onoff, indent);
 	if (flags & DEBUG_SPF_EVENTS)
-		vty_out(vty, "IS-IS SPF events debugging is %s\n", onoffs);
+		print_debug_line(vty, "SPF events", onoff, indent);
 	if (flags & DEBUG_SR)
-		vty_out(vty, "IS-IS Segment Routing events debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "Segment Routing events", onoff, indent);
 	if (flags & DEBUG_TE)
-		vty_out(vty,
-			"IS-IS Traffic Engineering events debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "Traffic Engineering events", onoff, indent);
 	if (flags & DEBUG_LFA)
-		vty_out(vty, "IS-IS LFA events debugging is %s\n", onoffs);
+		print_debug_line(vty, "LFA events", onoff, indent);
 	if (flags & DEBUG_UPDATE_PACKETS)
-		vty_out(vty, "IS-IS Update related packet debugging is %s\n",
-			onoffs);
+		print_debug_line(vty, "Update related packet", onoff, indent);
 	if (flags & DEBUG_RTE_EVENTS)
-		vty_out(vty, "IS-IS Route related debugging is %s\n", onoffs);
+		print_debug_line(vty, "Route related", onoff, indent);
 	if (flags & DEBUG_EVENTS)
-		vty_out(vty, "IS-IS Event debugging is %s\n", onoffs);
+		print_debug_line(vty, "Event", onoff, indent);
 	if (flags & DEBUG_PACKET_DUMP)
-		vty_out(vty, "IS-IS Packet dump debugging is %s\n", onoffs);
+		print_debug_line(vty, "Packet dump", onoff, indent);
 	if (flags & DEBUG_LSP_GEN)
-		vty_out(vty, "IS-IS LSP generation debugging is %s\n", onoffs);
+		print_debug_line(vty, "LSP generation", onoff, indent);
 	if (flags & DEBUG_LSP_SCHED)
-		vty_out(vty, "IS-IS LSP scheduling debugging is %s\n", onoffs);
+		print_debug_line(vty, "LSP scheduling", onoff, indent);
 	if (flags & DEBUG_FLOODING)
-		vty_out(vty, "IS-IS Flooding debugging is %s\n", onoffs);
+		print_debug_line(vty, "Flooding", onoff, indent);
 	if (flags & DEBUG_BFD)
-		vty_out(vty, "IS-IS BFD debugging is %s\n", onoffs);
+		print_debug_line(vty, "BFD", onoff, indent);
 	if (flags & DEBUG_LDP_SYNC)
-		vty_out(vty, "IS-IS ldp-sync debugging is %s\n", onoffs);
+		print_debug_line(vty, "ldp-sync", onoff, indent);
+}
+
+/*
+ * 'isis debug'
+ */
+void print_debug(struct vty *vty, int flags, int onoff)
+{
+	print_debug_with_indentation(vty, flags, onoff, false);
 }
 
 DEFUN_NOSH (show_debugging,
@@ -1712,40 +1720,40 @@ DEFUN_NOSH (show_debugging,
 	    "State of each debugging option\n"
 	    PROTO_HELP)
 {
-	vty_out(vty, PROTO_NAME " debugging status:\n");
+	vty_out(vty, PROTO_NICE_NAME " debugging status:\n");
 
 	if (IS_DEBUG_ADJ_PACKETS)
-		print_debug(vty, DEBUG_ADJ_PACKETS, 1);
+		print_debug_with_indentation(vty, DEBUG_ADJ_PACKETS, 1, true);
 	if (IS_DEBUG_TX_QUEUE)
-		print_debug(vty, DEBUG_TX_QUEUE, 1);
+		print_debug_with_indentation(vty, DEBUG_TX_QUEUE, 1, true);
 	if (IS_DEBUG_SNP_PACKETS)
-		print_debug(vty, DEBUG_SNP_PACKETS, 1);
+		print_debug_with_indentation(vty, DEBUG_SNP_PACKETS, 1, true);
 	if (IS_DEBUG_SPF_EVENTS)
-		print_debug(vty, DEBUG_SPF_EVENTS, 1);
+		print_debug_with_indentation(vty, DEBUG_SPF_EVENTS, 1, true);
 	if (IS_DEBUG_SR)
-		print_debug(vty, DEBUG_SR, 1);
+		print_debug_with_indentation(vty, DEBUG_SR, 1, true);
 	if (IS_DEBUG_TE)
-		print_debug(vty, DEBUG_TE, 1);
+		print_debug_with_indentation(vty, DEBUG_TE, 1, true);
 	if (IS_DEBUG_UPDATE_PACKETS)
-		print_debug(vty, DEBUG_UPDATE_PACKETS, 1);
+		print_debug_with_indentation(vty, DEBUG_UPDATE_PACKETS, 1, true);
 	if (IS_DEBUG_RTE_EVENTS)
-		print_debug(vty, DEBUG_RTE_EVENTS, 1);
+		print_debug_with_indentation(vty, DEBUG_RTE_EVENTS, 1, true);
 	if (IS_DEBUG_EVENTS)
-		print_debug(vty, DEBUG_EVENTS, 1);
+		print_debug_with_indentation(vty, DEBUG_EVENTS, 1, true);
 	if (IS_DEBUG_PACKET_DUMP)
-		print_debug(vty, DEBUG_PACKET_DUMP, 1);
+		print_debug_with_indentation(vty, DEBUG_PACKET_DUMP, 1, true);
 	if (IS_DEBUG_LSP_GEN)
-		print_debug(vty, DEBUG_LSP_GEN, 1);
+		print_debug_with_indentation(vty, DEBUG_LSP_GEN, 1, true);
 	if (IS_DEBUG_LSP_SCHED)
-		print_debug(vty, DEBUG_LSP_SCHED, 1);
+		print_debug_with_indentation(vty, DEBUG_LSP_SCHED, 1, true);
 	if (IS_DEBUG_FLOODING)
-		print_debug(vty, DEBUG_FLOODING, 1);
+		print_debug_with_indentation(vty, DEBUG_FLOODING, 1, true);
 	if (IS_DEBUG_BFD)
-		print_debug(vty, DEBUG_BFD, 1);
+		print_debug_with_indentation(vty, DEBUG_BFD, 1, true);
 	if (IS_DEBUG_LDP_SYNC)
-		print_debug(vty, DEBUG_LDP_SYNC, 1);
+		print_debug_with_indentation(vty, DEBUG_LDP_SYNC, 1, true);
 	if (IS_DEBUG_LFA)
-		print_debug(vty, DEBUG_LFA, 1);
+		print_debug_with_indentation(vty, DEBUG_LFA, 1, true);
 
 	cmd_show_lib_debugs(vty);
 
@@ -2389,6 +2397,7 @@ static const char *pdu_counter_index_to_name_json(enum pdu_counter_index index)
 	}
 
 	assert(!"Reached end of function where we are not expecting to");
+	return "DEV ESCAPE";
 }
 
 static void common_isis_summary_json(struct json_object *json,
@@ -3220,12 +3229,12 @@ static void area_resign_level(struct isis_area *area, int level)
 	if (area->spf_timer[level - 1])
 		isis_spf_timer_free(EVENT_ARG(area->spf_timer[level - 1]));
 
-	EVENT_OFF(area->spf_timer[level - 1]);
+	event_cancel(&area->spf_timer[level - 1]);
 
 	sched_debug(
 		"ISIS (%s): Resigned from L%d - canceling LSP regeneration timer.",
 		area->area_tag, level);
-	EVENT_OFF(area->t_lsp_refresh[level - 1]);
+	event_cancel(&area->t_lsp_refresh[level - 1]);
 	area->lsp_regenerate_pending[level - 1] = 0;
 }
 
@@ -3314,7 +3323,7 @@ void isis_area_overload_bit_set(struct isis_area *area, bool overload_bit)
 		} else {
 			/* Cancel overload on startup timer if it's running */
 			if (area->t_overload_on_startup_timer) {
-				EVENT_OFF(area->t_overload_on_startup_timer);
+				event_cancel(&area->t_overload_on_startup_timer);
 				area->t_overload_on_startup_timer = NULL;
 			}
 		}

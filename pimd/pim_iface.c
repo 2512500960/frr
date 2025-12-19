@@ -145,8 +145,9 @@ struct pim_interface *pim_if_new(struct interface *ifp, bool gm, bool pim,
 	       pim_ifp->gm_default_query_interval);
 
 	pim_ifp->pim_enable = pim;
-	pim_ifp->pim_passive_enable = false;
+	pim_ifp->pim_mode = PIM_MODE_SPARSE;
 	pim_ifp->gm_enable = gm;
+	pim_ifp->gm_proxy = false;
 
 	pim_ifp->gm_join_list = NULL;
 	pim_ifp->static_group_list = NULL;
@@ -182,6 +183,8 @@ struct pim_interface *pim_if_new(struct interface *ifp, bool gm, bool pim,
 	pim_if_add_vif(ifp, ispimreg, is_vxlan_term);
 	pim_ifp->pim->mcast_if_count++;
 
+	pim_filter_ref_init(&pim_ifp->gmp_filter);
+
 	return pim_ifp;
 }
 
@@ -194,8 +197,17 @@ void pim_if_delete(struct interface *ifp)
 	assert(pim_ifp);
 
 	pim_ifp->pim->mcast_if_count--;
-	if (pim_ifp->gm_join_list)
+	if (pim_ifp->gm_join_list) {
 		pim_if_gm_join_del_all(ifp);
+		/*
+		 * Sometimes gm_join_del_all does not delete them all
+		 * and as such it's not actually freed.  Let's
+		 * just clean this up if it wasn't to prevent
+		 * the problem.
+		 */
+		if (pim_ifp->gm_join_list)
+			list_delete(&pim_ifp->gm_join_list);
+	}
 
 	if (pim_ifp->static_group_list)
 		pim_if_static_group_del_all(ifp);
@@ -210,6 +222,8 @@ void pim_if_delete(struct interface *ifp)
 	pim_if_del_vif(ifp);
 
 	pim_igmp_if_fini(pim_ifp);
+
+	pim_filter_ref_fini(&pim_ifp->gmp_filter);
 
 	list_delete(&pim_ifp->pim_neighbor_list);
 	list_delete(&pim_ifp->upstream_switch_list);
@@ -1026,6 +1040,10 @@ int pim_if_del_vif(struct interface *ifp)
 		return -1;
 	}
 
+	if (PIM_DEBUG_ZEBRA)
+		zlog_debug("%s: vif_index=%d  on interface %s ifindex=%d", __func__,
+			   pim_ifp->mroute_vif_index, ifp->name, ifp->ifindex);
+
 	/* if the device was a pim_vxlan iif/oif update vxlan mroute entries */
 	pim_vxlan_del_vif(ifp);
 
@@ -1192,7 +1210,7 @@ long pim_if_t_suppressed_msec(struct interface *ifp)
 
 	/* t_suppressed = t_periodic * rand(1.1, 1.4) */
 	ramount = 1100 + (frr_weak_random() % (1400 - 1100 + 1));
-	t_suppressed_msec = router->t_periodic * ramount;
+	t_suppressed_msec = (long)(router->t_periodic) * ramount;
 
 	return t_suppressed_msec;
 }
@@ -1436,10 +1454,8 @@ int pim_if_gm_join_del(struct interface *ifp, pim_addr group_addr,
 	}
 	listnode_delete(pim_ifp->gm_join_list, ij);
 	gm_join_free(ij);
-	if (listcount(pim_ifp->gm_join_list) < 1) {
+	if (listcount(pim_ifp->gm_join_list) < 1)
 		list_delete(&pim_ifp->gm_join_list);
-		pim_ifp->gm_join_list = 0;
-	}
 
 	return 0;
 }
@@ -1704,6 +1720,7 @@ void pim_if_create_pimreg(struct pim_instance *pim)
 			snprintf(pimreg_name, sizeof(pimreg_name), PIMREG "%u",
 				 pim->vrf->data.l.table_id);
 
+		pim_reg_sock_bind(pim);
 		pim->regiface = if_get_by_name(pimreg_name, pim->vrf->vrf_id,
 					       pim->vrf->name);
 		pim->regiface->ifindex = PIM_OIF_PIM_REGISTER_VIF;
@@ -1875,6 +1892,13 @@ static int pim_ifp_up(struct interface *ifp)
 	*/
 	pim_if_addr_add_all(ifp);
 
+	/*pimreg interface might not be created in pim_ifp_create as
+	 * operational state may  be down at that moment, create one now if
+	 * not created.
+	 */
+	if (if_is_operative(ifp) && (!pim->regiface))
+		pim_if_create_pimreg(pim);
+
 	/*
 	 * If we have a pimreg device callback and it's for a specific
 	 * table set the master appropriately
@@ -2017,11 +2041,11 @@ void pim_pim_interface_delete(struct interface *ifp)
 	if (!pim_ifp)
 		return;
 
+	pim_ifp->pim_enable = false;
+
 #if PIM_IPV == 4
 	pim_autorp_rm_ifp(ifp);
 #endif
-
-	pim_ifp->pim_enable = false;
 
 	pim_if_membership_clear(ifp);
 
@@ -2057,4 +2081,21 @@ void pim_gm_interface_delete(struct interface *ifp)
 
 	if (!pim_ifp->pim_enable)
 		pim_if_delete(ifp);
+}
+
+
+const char *pim_mod_str(enum pim_iface_mode mode)
+{
+	switch (mode) {
+	case PIM_MODE_SPARSE:
+		return "SPARSE";
+	case PIM_MODE_DENSE:
+		return "DENSE";
+	case PIM_MODE_SPARSE_DENSE:
+		return "SPARSE_DENSE";
+	case PIM_MODE_SSM:
+		return "SSM";
+	}
+
+	return "";
 }

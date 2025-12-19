@@ -44,7 +44,6 @@ static void if_set_name(struct interface *ifp, const char *name);
 static struct interface *if_lookup_by_ifindex(ifindex_t ifindex,
 					      vrf_id_t vrf_id);
 static struct interface *if_lookup_by_index_all_vrf(ifindex_t ifindex);
-static int if_cmp_func(const struct interface *, const struct interface *);
 static int if_cmp_index_func(const struct interface *ifp1,
 			     const struct interface *ifp2);
 RB_GENERATE(if_name_head, interface, name_entry, if_cmp_func);
@@ -136,8 +135,7 @@ int if_cmp_name_func(const char *p1, const char *p2)
 	return 0;
 }
 
-static int if_cmp_func(const struct interface *ifp1,
-		       const struct interface *ifp2)
+int if_cmp_func(const struct interface *ifp1, const struct interface *ifp2)
 {
 	return if_cmp_name_func(ifp1->name, ifp2->name);
 }
@@ -682,7 +680,7 @@ struct interface *if_get_by_name(const char *name, vrf_id_t vrf_id,
 				 const char *vrf_name)
 {
 	struct interface *ifp = NULL;
-	struct vrf *vrf;
+	struct vrf *vrf = NULL;
 
 	switch (vrf_get_backend()) {
 	case VRF_BACKEND_NETNS:
@@ -717,8 +715,6 @@ struct interface *if_get_by_name(const char *name, vrf_id_t vrf_id,
 		assert(vrf);
 
 		break;
-	default:
-		return NULL;
 	}
 
 	return if_create_name(name, vrf);
@@ -1079,6 +1075,8 @@ void if_terminate(struct vrf *vrf)
 
 	while (!RB_EMPTY(if_name_head, &vrf->ifaces_by_name)) {
 		ifp = RB_ROOT(if_name_head, &vrf->ifaces_by_name);
+		if (!ifp)
+			break;
 		if_delete(&ifp);
 	}
 }
@@ -1591,6 +1589,12 @@ static int lib_interface_create(struct nb_cb_create_args *args)
 		} else {
 			ifp = if_get_by_name(ifname, VRF_UNKNOWN,
 					     VRF_DEFAULT_NAME);
+		}
+
+		if (!ifp) {
+			snprintf(args->errmsg, args->errmsg_len, "failed to create interface '%s'",
+				 ifname);
+			return NB_ERR_RESOURCE;
 		}
 
 		ifp->configured = true;

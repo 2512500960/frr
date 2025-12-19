@@ -185,7 +185,7 @@ static void bgp_dump_header(struct stream *obuf, int type, int subtype,
 	msecs = clock.tv_usec;
 
 	/* Put dump packet header. */
-	stream_putl(obuf, secs);
+	stream_putl(obuf, frr_time_t_to_uint32_t(secs));
 	stream_putw(obuf, type);
 	stream_putw(obuf, subtype);
 	stream_putl(obuf, 0); /* len */
@@ -698,7 +698,7 @@ static int bgp_dump_unset(struct bgp_dump *bgp_dump)
 	}
 
 	/* Removing interval event. */
-	EVENT_OFF(bgp_dump->t_interval);
+	event_cancel(&bgp_dump->t_interval);
 
 	bgp_dump->interval = 0;
 

@@ -280,7 +280,6 @@ void ospf_apiserver_event(enum ospf_apiserver_event event, int fd,
 				     NULL);
 		break;
 	case OSPF_APISERVER_SYNC_READ:
-		apiserv->t_sync_read = NULL;
 		event_add_read(master, ospf_apiserver_read, apiserv, fd,
 			       &apiserv->t_sync_read);
 		break;
@@ -309,14 +308,6 @@ void ospf_apiserver_free(struct ospf_apiserver *apiserv)
 {
 	struct listnode *node;
 
-	/* Cancel read and write threads. */
-	EVENT_OFF(apiserv->t_sync_read);
-#ifdef USE_ASYNC_READ
-	EVENT_OFF(apiserv->t_async_read);
-#endif /* USE_ASYNC_READ */
-	EVENT_OFF(apiserv->t_sync_write);
-	EVENT_OFF(apiserv->t_async_write);
-
 	/* Unregister all opaque types that application registered
 	   and flush opaque LSAs if still in LSDB. */
 
@@ -327,6 +318,14 @@ void ospf_apiserver_free(struct ospf_apiserver *apiserv)
 			apiserv, regtype->lsa_type, regtype->opaque_type);
 	}
 	list_delete(&apiserv->opaque_types);
+
+	/* Cancel read and write threads. */
+	event_cancel(&apiserv->t_sync_read);
+#ifdef USE_ASYNC_READ
+	event_cancel(&apiserv->t_async_read);
+#endif /* USE_ASYNC_READ */
+	event_cancel(&apiserv->t_sync_write);
+	event_cancel(&apiserv->t_async_write);
 
 	/* Close connections to OSPFd. */
 	if (apiserv->fd_sync > 0) {
@@ -361,15 +360,15 @@ void ospf_apiserver_free(struct ospf_apiserver *apiserv)
 	XFREE(MTYPE_APISERVER, apiserv);
 }
 
-void ospf_apiserver_read(struct event *thread)
+void ospf_apiserver_read(struct event *e)
 {
 	struct ospf_apiserver *apiserv;
 	struct msg *msg;
 	int fd;
 	enum ospf_apiserver_event event;
 
-	apiserv = EVENT_ARG(thread);
-	fd = EVENT_FD(thread);
+	apiserv = EVENT_ARG(e);
+	fd = EVENT_FD(e);
 
 	if (fd == apiserv->fd_sync) {
 		event = OSPF_APISERVER_SYNC_READ;
@@ -414,22 +413,22 @@ void ospf_apiserver_read(struct event *thread)
 	/* Dispatch to corresponding message handler. */
 	ospf_apiserver_handle_msg(apiserv, msg);
 
-	/* Prepare for next message, add read thread. */
+	/* Prepare for next message, add read event. */
 	ospf_apiserver_event(event, fd, apiserv);
 
 	msg_free(msg);
 }
 
-void ospf_apiserver_sync_write(struct event *thread)
+void ospf_apiserver_sync_write(struct event *event)
 {
 	struct ospf_apiserver *apiserv;
 	struct msg *msg;
 	int fd;
 	int rc = -1;
 
-	apiserv = EVENT_ARG(thread);
+	apiserv = EVENT_ARG(event);
 	assert(apiserv);
-	fd = EVENT_FD(thread);
+	fd = EVENT_FD(event);
 
 	apiserv->t_sync_write = NULL;
 
@@ -465,7 +464,7 @@ void ospf_apiserver_sync_write(struct event *thread)
 	}
 
 
-	/* If more messages are in sync message fifo, schedule write thread. */
+	/* If more messages are in sync message fifo, schedule write event. */
 	if (msg_fifo_head(apiserv->out_sync_fifo)) {
 		ospf_apiserver_event(OSPF_APISERVER_SYNC_WRITE,
 				     apiserv->fd_sync, apiserv);
@@ -480,16 +479,16 @@ out:
 }
 
 
-void ospf_apiserver_async_write(struct event *thread)
+void ospf_apiserver_async_write(struct event *event)
 {
 	struct ospf_apiserver *apiserv;
 	struct msg *msg;
 	int fd;
 	int rc = -1;
 
-	apiserv = EVENT_ARG(thread);
+	apiserv = EVENT_ARG(event);
 	assert(apiserv);
-	fd = EVENT_FD(thread);
+	fd = EVENT_FD(event);
 
 	apiserv->t_async_write = NULL;
 
@@ -525,7 +524,7 @@ void ospf_apiserver_async_write(struct event *thread)
 	}
 
 
-	/* If more messages are in async message fifo, schedule write thread. */
+	/* If more messages are in async message fifo, schedule write event. */
 	if (msg_fifo_head(apiserv->out_async_fifo)) {
 		ospf_apiserver_event(OSPF_APISERVER_ASYNC_WRITE,
 				     apiserv->fd_async, apiserv);
@@ -580,7 +579,7 @@ int ospf_apiserver_serv_sock_family(unsigned short port, int family)
 
 /* Accept connection request from external applications. For each
    accepted connection allocate own connection instance. */
-void ospf_apiserver_accept(struct event *thread)
+void ospf_apiserver_accept(struct event *event)
 {
 	int accept_sock;
 	int new_sync_sock;
@@ -592,8 +591,8 @@ void ospf_apiserver_accept(struct event *thread)
 	unsigned int peerlen;
 	int ret;
 
-	/* EVENT_ARG (thread) is NULL */
-	accept_sock = EVENT_FD(thread);
+	/* EVENT_ARG (event) is NULL */
+	accept_sock = EVENT_FD(event);
 
 	/* Keep hearing on socket for further connections. */
 	ospf_apiserver_event(OSPF_APISERVER_ACCEPT, accept_sock, NULL);
@@ -987,6 +986,8 @@ void ospf_apiserver_notify_ready_type9(struct ospf_apiserver *apiserv)
 	struct registered_opaque_type *r;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+	if (!ospf)
+		goto out;
 
 	for (ALL_LIST_ELEMENTS(ospf->oiflist, node, nnode, oi)) {
 		/* Check if this interface is indeed ready for type 9 */
@@ -1035,6 +1036,8 @@ void ospf_apiserver_notify_ready_type10(struct ospf_apiserver *apiserv)
 	struct ospf_area *area;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+	if (!ospf)
+		goto out;
 
 	for (ALL_LIST_ELEMENTS(ospf->areas, node, nnode, area)) {
 		struct registered_opaque_type *r;
@@ -1082,6 +1085,8 @@ void ospf_apiserver_notify_ready_type11(struct ospf_apiserver *apiserv)
 	struct registered_opaque_type *r;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+	if (!ospf)
+		goto out;
 
 	/* Can type 11 be originated? */
 	if (!ospf_apiserver_is_ready_type11(ospf))
@@ -1258,10 +1263,13 @@ int ospf_apiserver_handle_sync_lsdb(struct ospf_apiserver *apiserv,
 	struct ospf *ospf;
 	struct ospf_area *area;
 
-	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-
 	/* Get request sequence number */
 	seqnum = msg_get_seq(msg);
+
+	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+	if (!ospf)
+		goto out;
+
 	/* Set sync msg. */
 	smsg = (struct msg_sync_lsdb *)STREAM_DATA(msg->s);
 
@@ -1339,6 +1347,7 @@ int ospf_apiserver_handle_sync_lsdb(struct ospf_apiserver *apiserv,
 							seqnum);
 	}
 
+out:
 	/* Send a reply back to client with return code */
 	rc = ospf_apiserver_send_reply(apiserv, seqnum, rc);
 	return rc;
@@ -1353,14 +1362,19 @@ int ospf_apiserver_handle_sync_lsdb(struct ospf_apiserver *apiserv,
 int ospf_apiserver_handle_sync_reachable(struct ospf_apiserver *apiserv,
 					 struct msg *msg)
 {
-	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-	struct route_table *rt = ospf->all_rtrs;
+	int _rc, rc = 0;
 	uint32_t seqnum = msg_get_seq(msg);
+	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+
+	if (!ospf)
+		goto out;
+
+	struct route_table *rt = ospf->all_rtrs;
 	struct in_addr *a, *abuf;
 	struct msg_reachable_change *areach;
 	struct msg *amsg;
 	uint mcount, count;
-	int _rc, rc = 0;
+
 
 	if (!rt)
 		goto out;
@@ -1398,13 +1412,17 @@ out:
 int ospf_apiserver_handle_sync_ism(struct ospf_apiserver *apiserv,
 				   struct msg *msg)
 {
+	uint32_t seqnum = msg_get_seq(msg);
+	int _rc, rc = 0;
 	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+
+	if (!ospf)
+		goto out;
+
 	struct listnode *anode, *inode;
 	struct ospf_area *area;
 	struct ospf_interface *oi;
 	struct msg *m;
-	uint32_t seqnum = msg_get_seq(msg);
-	int _rc, rc = 0;
 
 	/* walk all areas */
 	for (ALL_LIST_ELEMENTS_RO(ospf->areas, anode, area)) {
@@ -1420,6 +1438,7 @@ int ospf_apiserver_handle_sync_ism(struct ospf_apiserver *apiserv,
 		if (rc)
 			break;
 	}
+out:
 	/* Send a reply back to client with return code */
 	_rc = ospf_apiserver_send_reply(apiserv, seqnum, rc);
 	return rc ? rc : _rc;
@@ -1429,15 +1448,19 @@ int ospf_apiserver_handle_sync_ism(struct ospf_apiserver *apiserv,
 int ospf_apiserver_handle_sync_nsm(struct ospf_apiserver *apiserv,
 				   struct msg *msg)
 {
+	uint32_t seqnum = msg_get_seq(msg);
+	int _rc, rc = 0;
 	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+
+	if (!ospf)
+		goto out;
+
 	struct listnode *anode, *inode;
 	struct ospf_area *area;
 	struct ospf_interface *oi;
 	struct ospf_neighbor *nbr;
 	struct route_node *rn;
 	struct msg *m;
-	uint32_t seqnum = msg_get_seq(msg);
-	int _rc, rc = 0;
 
 	/* walk all areas */
 	for (ALL_LIST_ELEMENTS_RO(ospf->areas, anode, area)) {
@@ -1463,6 +1486,7 @@ int ospf_apiserver_handle_sync_nsm(struct ospf_apiserver *apiserv,
 		if (rc)
 			break;
 	}
+out:
 	/* Send a reply back to client with return code */
 	_rc = ospf_apiserver_send_reply(apiserv, seqnum, rc);
 	return rc ? rc : _rc;
@@ -1472,15 +1496,20 @@ int ospf_apiserver_handle_sync_nsm(struct ospf_apiserver *apiserv,
 int ospf_apiserver_handle_sync_router_id(struct ospf_apiserver *apiserv,
 					 struct msg *msg)
 {
-	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
 	uint32_t seqnum = msg_get_seq(msg);
 	struct msg *m;
 	int _rc, rc = 0;
+	struct ospf *ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+
+	if (!ospf)
+		goto out;
+
 
 	m = new_msg_router_id_change(seqnum, ospf->router_id);
 	rc = ospf_apiserver_send_msg(apiserv, m);
 	msg_free(m);
 
+out:
 	/* Send a reply back to client with return code */
 	_rc = ospf_apiserver_send_reply(apiserv, seqnum, rc);
 	return rc ? rc : _rc;
@@ -1515,7 +1544,8 @@ struct ospf_lsa *ospf_apiserver_opaque_lsa_new(struct ospf_area *area,
 	else
 		ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
 
-	assert(ospf);
+	if (!ospf)
+		return NULL;
 
 	/* Create a stream for internal opaque LSA */
 	if ((s = stream_new(OSPF_MAX_LSA_SIZE)) == NULL) {
@@ -1602,6 +1632,9 @@ int ospf_apiserver_handle_originate_request(struct ospf_apiserver *apiserv,
 	int rc = 0;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
+
+	if (!ospf)
+		goto out;
 
 	/* Extract opaque LSA data from message */
 	omsg = (struct msg_originate_request *)STREAM_DATA(msg->s);
@@ -1746,7 +1779,8 @@ void ospf_apiserver_flood_opaque_lsa(struct ospf_lsa *lsa)
 		struct ospf *ospf;
 
 		ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-		assert(ospf);
+		if (!ospf)
+			return;
 
 		/* Increment counters? XXX */
 
@@ -1762,7 +1796,8 @@ int ospf_apiserver_originate1(struct ospf_lsa *lsa, struct ospf_lsa *old)
 	struct ospf *ospf;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-	assert(ospf);
+	if (!ospf)
+		return -1;
 
 	if (old) {
 		/*
@@ -1861,7 +1896,8 @@ struct ospf_lsa *ospf_apiserver_lsa_refresher(struct ospf_lsa *lsa)
 	assert(lsa);
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-	assert(ospf);
+	if (!ospf)
+		return NULL;
 
 	if (IS_DEBUG_OSPF_CLIENT_API) {
 		zlog_debug("LSA[Type%d:%pI4]: OSPF API Server LSA Refresher",
@@ -1872,8 +1908,7 @@ struct ospf_lsa *ospf_apiserver_lsa_refresher(struct ospf_lsa *lsa)
 	if (!apiserv) {
 		zlog_warn("%s: LSA[%s]: No apiserver?", __func__,
 			  dump_lsa_key(lsa));
-		lsa->data->ls_age =
-			htons(OSPF_LSA_MAXAGE); /* Flush it anyway. */
+		LS_AGE_SET(lsa, OSPF_LSA_MAXAGE); /* Flush it anyway. */
 		goto out;
 	}
 
@@ -1953,7 +1988,8 @@ int ospf_apiserver_handle_delete_request(struct ospf_apiserver *apiserv,
 	struct ospf *ospf;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-	assert(ospf);
+	if (!ospf)
+		goto out;
 
 	/* Extract opaque LSA from message */
 	dmsg = (struct msg_delete_request *)STREAM_DATA(msg->s);
@@ -2077,7 +2113,8 @@ void ospf_apiserver_flush_opaque_lsa(struct ospf_apiserver *apiserv,
 	struct ospf_area *area;
 
 	ospf = ospf_lookup_by_vrf_id(VRF_DEFAULT);
-	assert(ospf);
+	if (!ospf)
+		return;
 
 	/* Set parameter struct. */
 	param.apiserv = apiserv;

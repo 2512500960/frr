@@ -2262,7 +2262,7 @@ DEFPY_YANG_NOSH (isis_srv6_node_msd,
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/msd/node-msd/max-segs-left
  */
-DEFPY (isis_srv6_node_msd_max_segs_left,
+DEFPY_YANG (isis_srv6_node_msd_max_segs_left,
        isis_srv6_node_msd_max_segs_left_cmd,
        "[no] max-segs-left (0-255)$max_segs_left",
        NO_STR
@@ -2282,7 +2282,7 @@ DEFPY (isis_srv6_node_msd_max_segs_left,
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/msd/node-msd/max-end-pop
  */
-DEFPY (isis_srv6_node_msd_max_end_pop,
+DEFPY_YANG (isis_srv6_node_msd_max_end_pop,
        isis_srv6_node_msd_max_end_pop_cmd,
        "[no] max-end-pop (0-255)$max_end_pop",
        NO_STR
@@ -2301,7 +2301,7 @@ DEFPY (isis_srv6_node_msd_max_end_pop,
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/msd/node-msd/max-h-encaps
  */
-DEFPY (isis_srv6_node_msd_max_h_encaps,
+DEFPY_YANG (isis_srv6_node_msd_max_h_encaps,
        isis_srv6_node_msd_max_h_encaps_cmd,
        "[no] max-h-encaps (0-255)$max_h_encaps",
        NO_STR
@@ -2321,7 +2321,7 @@ DEFPY (isis_srv6_node_msd_max_h_encaps,
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/msd/node-msd/max-end-d
  */
-DEFPY (isis_srv6_node_msd_max_end_d,
+DEFPY_YANG (isis_srv6_node_msd_max_end_d,
        isis_srv6_node_msd_max_end_d_cmd,
        "[no] max-end-d (0-255)$max_end_d",
        NO_STR
@@ -2367,7 +2367,7 @@ void cli_show_isis_srv6_node_msd_end(struct vty *vty, const struct lyd_node *dno
 /*
  * XPath: /frr-isisd:isis/instance/segment-routing-srv6/interface
  */
-DEFPY (isis_srv6_interface,
+DEFPY_YANG (isis_srv6_interface,
        isis_srv6_interface_cmd,
        "[no] interface WORD$interface",
        NO_STR
@@ -3373,7 +3373,7 @@ void cli_show_ip_isis_frr(struct vty *vty, const struct lyd_node *dnode,
 /*
  * XPath: /frr-interface:lib/interface/frr-isisd:isis/fast-reroute/level-{1,2}/lfa/enable
  */
-DEFPY(isis_lfa, isis_lfa_cmd,
+DEFPY_YANG(isis_lfa, isis_lfa_cmd,
       "[no] isis fast-reroute lfa [level-1|level-2]$level",
       NO_STR
       "IS-IS routing protocol\n"
@@ -3416,7 +3416,7 @@ DEFPY(isis_lfa, isis_lfa_cmd,
  * XPath:
  * /frr-interface:lib/interface/frr-isisd:isis/fast-reroute/level-{1,2}/lfa/exclude-interface
  */
-DEFPY(isis_lfa_exclude_interface, isis_lfa_exclude_interface_cmd,
+DEFPY_YANG(isis_lfa_exclude_interface, isis_lfa_exclude_interface_cmd,
       "[no] isis fast-reroute lfa [level-1|level-2]$level exclude interface IFNAME$ifname",
       NO_STR
       "IS-IS routing protocol\n"
@@ -3467,7 +3467,7 @@ void cli_show_frr_lfa_exclude_interface(struct vty *vty,
  * XPath:
  * /frr-interface:lib/interface/frr-isisd:isis/fast-reroute/level-{1,2}/remote-lfa/enable
  */
-DEFPY(isis_remote_lfa, isis_remote_lfa_cmd,
+DEFPY_YANG(isis_remote_lfa, isis_remote_lfa_cmd,
       "[no] isis fast-reroute remote-lfa tunnel mpls-ldp [level-1|level-2]$level",
       NO_STR
       "IS-IS routing protocol\n"
@@ -3512,7 +3512,7 @@ DEFPY(isis_remote_lfa, isis_remote_lfa_cmd,
  * XPath:
  * /frr-interface:lib/interface/frr-isisd:isis/fast-reroute/level-{1,2}/remote-lfa/maximum-metric
  */
-DEFPY(isis_remote_lfa_max_metric, isis_remote_lfa_max_metric_cmd,
+DEFPY_YANG(isis_remote_lfa_max_metric, isis_remote_lfa_max_metric_cmd,
       "[no] isis fast-reroute remote-lfa maximum-metric (1-16777215)$metric [level-1|level-2]$level",
       NO_STR
       "IS-IS routing protocol\n"
@@ -3565,7 +3565,7 @@ void cli_show_frr_remote_lfa_max_metric(struct vty *vty,
 /*
  * XPath: /frr-interface:lib/interface/frr-isisd:isis/fast-reroute/level-{1,2}/ti-lfa/enable
  */
-DEFPY(isis_ti_lfa, isis_ti_lfa_cmd,
+DEFPY_YANG(isis_ti_lfa, isis_ti_lfa_cmd,
       "[no] isis fast-reroute ti-lfa [level-1|level-2]$level [node-protection$node_protection [link-fallback$link_fallback]]",
       NO_STR
       "IS-IS routing protocol\n"
@@ -3683,7 +3683,7 @@ void cli_show_isis_log_pdu_drops(struct vty *vty, const struct lyd_node *dnode,
 /*
  * XPath: /frr-isisd:isis/instance/mpls/ldp-sync
  */
-DEFPY(isis_mpls_ldp_sync, isis_mpls_ldp_sync_cmd, "mpls ldp-sync",
+DEFPY_YANG(isis_mpls_ldp_sync, isis_mpls_ldp_sync_cmd, "mpls ldp-sync",
       MPLS_STR MPLS_LDP_SYNC_STR)
 {
 	nb_cli_enqueue_change(vty, "./mpls/ldp-sync", NB_OP_CREATE, NULL);
@@ -3691,7 +3691,7 @@ DEFPY(isis_mpls_ldp_sync, isis_mpls_ldp_sync_cmd, "mpls ldp-sync",
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-DEFPY(no_isis_mpls_ldp_sync, no_isis_mpls_ldp_sync_cmd, "no mpls ldp-sync",
+DEFPY_YANG(no_isis_mpls_ldp_sync, no_isis_mpls_ldp_sync_cmd, "no mpls ldp-sync",
       NO_STR MPLS_STR NO_MPLS_LDP_SYNC_STR)
 {
 	nb_cli_enqueue_change(vty, "./mpls/ldp-sync", NB_OP_DESTROY, NULL);
@@ -3705,7 +3705,7 @@ void cli_show_isis_mpls_ldp_sync(struct vty *vty, const struct lyd_node *dnode,
 	vty_out(vty, " mpls ldp-sync\n");
 }
 
-DEFPY(isis_mpls_ldp_sync_holddown, isis_mpls_ldp_sync_holddown_cmd,
+DEFPY_YANG(isis_mpls_ldp_sync_holddown, isis_mpls_ldp_sync_holddown_cmd,
       "mpls ldp-sync holddown (0-10000)",
       MPLS_STR MPLS_LDP_SYNC_STR
       "Time to wait for LDP-SYNC to occur before restoring interface metric\n"
@@ -3717,7 +3717,7 @@ DEFPY(isis_mpls_ldp_sync_holddown, isis_mpls_ldp_sync_holddown_cmd,
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-DEFPY(no_isis_mpls_ldp_sync_holddown, no_isis_mpls_ldp_sync_holddown_cmd,
+DEFPY_YANG(no_isis_mpls_ldp_sync_holddown, no_isis_mpls_ldp_sync_holddown_cmd,
       "no mpls ldp-sync holddown [<(1-10000)>]",
       NO_STR MPLS_STR MPLS_LDP_SYNC_STR NO_MPLS_LDP_SYNC_HOLDDOWN_STR "Time in seconds\n")
 {
@@ -3738,7 +3738,7 @@ void cli_show_isis_mpls_ldp_sync_holddown(struct vty *vty,
 /*
  * XPath: /frr-interface:lib/interface/frr-isisd:isis/mpls/ldp-sync
  */
-DEFPY(isis_mpls_if_ldp_sync, isis_mpls_if_ldp_sync_cmd,
+DEFPY_YANG(isis_mpls_if_ldp_sync, isis_mpls_if_ldp_sync_cmd,
       "[no] isis mpls ldp-sync",
       NO_STR "IS-IS routing protocol\n" MPLS_STR MPLS_LDP_SYNC_STR)
 {
@@ -3768,7 +3768,7 @@ void cli_show_isis_mpls_if_ldp_sync(struct vty *vty,
 	vty_out(vty, " isis mpls ldp-sync\n");
 }
 
-DEFPY(isis_mpls_if_ldp_sync_holddown, isis_mpls_if_ldp_sync_holddown_cmd,
+DEFPY_YANG(isis_mpls_if_ldp_sync_holddown, isis_mpls_if_ldp_sync_holddown_cmd,
       "isis mpls ldp-sync holddown (0-10000)",
       "IS-IS routing protocol\n" MPLS_STR MPLS_LDP_SYNC_STR
       "Time to wait for LDP-SYNC to occur before restoring interface metric\n"
@@ -3789,7 +3789,7 @@ DEFPY(isis_mpls_if_ldp_sync_holddown, isis_mpls_if_ldp_sync_holddown_cmd,
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-DEFPY(no_isis_mpls_if_ldp_sync_holddown, no_isis_mpls_if_ldp_sync_holddown_cmd,
+DEFPY_YANG(no_isis_mpls_if_ldp_sync_holddown, no_isis_mpls_if_ldp_sync_holddown_cmd,
       "no isis mpls ldp-sync holddown [<(1-10000)>]",
       NO_STR "IS-IS routing protocol\n" MPLS_STR NO_MPLS_LDP_SYNC_STR
 	      NO_MPLS_LDP_SYNC_HOLDDOWN_STR "Time in seconds\n")
@@ -3824,14 +3824,13 @@ DEFPY_YANG_NOSH(flex_algo, flex_algo_cmd, "flex-algo (128-255)$algorithm",
 	int ret;
 	char xpath[XPATH_MAXLEN + 37];
 
-	snprintf(xpath, sizeof(xpath),
-		 "%s/flex-algos/flex-algo[flex-algo='%ld']", VTY_CURR_XPATH,
-		 algorithm);
+	snprintfrr(xpath, sizeof(xpath), "%s/flex-algos/flex-algo[flex-algo='%" PRId64 "']",
+		   VTY_CURR_XPATH, algorithm);
 
 	nb_cli_enqueue_change(vty, ".", NB_OP_CREATE, NULL);
 
-	ret = nb_cli_apply_changes(
-		vty, "./flex-algos/flex-algo[flex-algo='%ld']", algorithm);
+	ret = nb_cli_apply_changes(vty, "./flex-algos/flex-algo[flex-algo='%" PRId64 "']",
+				   algorithm);
 	if (ret == CMD_SUCCESS)
 		VTY_PUSH_XPATH(ISIS_FLEX_ALGO_NODE, xpath);
 
@@ -3845,18 +3844,18 @@ DEFPY_YANG(no_flex_algo, no_flex_algo_cmd, "no flex-algo (128-255)$algorithm",
 {
 	char xpath[XPATH_MAXLEN + 37];
 
-	snprintf(xpath, sizeof(xpath),
-		 "%s/flex-algos/flex-algo[flex-algo='%ld']", VTY_CURR_XPATH,
-		 algorithm);
+	snprintfrr(xpath, sizeof(xpath), "%s/flex-algos/flex-algo[flex-algo='%'" PRId64 "']",
+		   VTY_CURR_XPATH, algorithm);
 
 	if (!yang_dnode_exists(vty->candidate_config->dnode, xpath)) {
-		vty_out(vty, "ISIS flex-algo %ld isn't exist.\n", algorithm);
+		vty_out(vty, "ISIS flex-algo %" PRId64 " isn't exist.\n", algorithm);
 		return CMD_ERR_NO_MATCH;
 	}
 
 	nb_cli_enqueue_change(vty, ".", NB_OP_DESTROY, NULL);
-	return nb_cli_apply_changes_clear_pending(
-		vty, "./flex-algos/flex-algo[flex-algo='%ld']", algorithm);
+	return nb_cli_apply_changes_clear_pending(vty,
+						  "./flex-algos/flex-algo[flex-algo='%" PRId64 "']",
+						  algorithm);
 }
 
 DEFPY_YANG(advertise_definition, advertise_definition_cmd,

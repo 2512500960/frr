@@ -298,10 +298,6 @@ Basic Config Commands
    Set system wide line configuration. This configuration command applies to
    all VTY interfaces.
 
-.. clicmd:: line vty
-
-   Enter vty configuration mode.
-
 .. clicmd:: banner motd default
 
    Set default motd string.
@@ -315,6 +311,34 @@ Basic Config Commands
 
    Set motd string from an input.
 
+.. clicmd:: allow-reserved-ranges
+
+   Allow using reserved ranges (e.g. 127.0.0.0/8, 0.0.0.0/8, 240.0.0.0/4).
+
+   For example, this is necessary in case of multiple FRR instances
+   (or FRR + any other daemon) peering via loopback interfaces
+   running on the same router.
+
+   Another example is when you need to annouce a reserved range via
+   RIP protocol.
+
+   Default: off.
+
+Line VTY Commands
+------------------
+
+   These set of commands control VTY connections into FRR.  This set
+   of commands control directly connecting to a daemon via the VTY
+   interface, not vtysh.  This interface is deprecated and is going
+   away at some point in the future.  Having said this, these cli
+   commands can be pushed into the frr.conf file and will be read
+   appropriately by the individual daemons.
+
+.. clicmd:: line vty
+
+   Enter vty configuration mode.  All the following sub-commands
+   are under line vty.
+
 .. clicmd:: exec-timeout MINUTE [SECOND]
 
    Set VTY connection timeout value. When only one argument is specified
@@ -325,17 +349,13 @@ Basic Config Commands
    Not setting this, or setting the values to 0 0, means a timeout will not be
    enabled.
 
-.. clicmd:: access-class ACCESS-LIST
+.. clicmd:: [ipv6] access-class ACCESS-LIST
 
-   Restrict vty connections with an access list.
+   Restrict vty connections with an v4 or v6 access list.
 
-.. clicmd:: allow-reserved-ranges
+.. clicmd:: no vty login
 
-   Allow peering via loopback addresses (127.0.0.0/8). This is necessary in case
-   of multiple FRR instances (or FRR + any other daemon) peering via loopback
-   interfaces running on the same router.
-
-   Default: off.
+   Do not allow any operator to connect to FRR via the VTY interface.
 
 .. _sample-config-file:
 
@@ -658,6 +678,9 @@ Terminal Mode Commands
 
    POSIX Extended Regular Expressions are supported.
 
+.. clicmd:: clear
+
+   Clear the terminal display.
 
 .. _common-show-commands:
 
@@ -697,6 +720,12 @@ Terminal Mode Commands
    option enables the display of configuration leaves with their
    currently configured value (if the leaf is optional it will only show
    if it was created or has a default value).
+
+.. clicmd:: send log [level LEVEL] MESSAGE
+
+   Send MESSAGE to the log. If LEVEL is specified that is the level the
+   message will be logged at. LEVEL can be one emergencies, alerts, critical,
+   errors, warnings, notifications, informational, or debugging.
 
 .. _common-invocation-options:
 
@@ -848,6 +877,22 @@ The module expects its argument to be either ``Netlink`` or ``protobuf``,
 specifying the encapsulation to use. ``Netlink`` is the default, and
 ``protobuf`` may not be available if the module was built without protobuf
 support. Refer to :ref:`zebra-fib-push-interface` for more information.
+
+
+tcmalloc CLI Options
+====================
+
+If tcmalloc support is enabled (see the build instructions),
+additional CLI commands are available.
+
+.. clicmd:: show tcmalloc stats
+
+   Display memory utilization and stats from the tcmalloc library.
+
+.. clicmd:: memory release rate (0-100)
+
+   Configure the rate at which each FRR daemon will release free
+   memory back to the host OS, in MB/sec.
 
 
 .. _virtual-terminal-interfaces:

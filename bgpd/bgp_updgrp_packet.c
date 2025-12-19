@@ -447,7 +447,8 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 		int gnh_modified, lnh_modified;
 		size_t offset_nhglobal = vec->offset + 1;
 		size_t offset_nhlocal = vec->offset + 1;
-		bool ll_nexthop_only = PEER_HAS_LINK_LOCAL_CAPABILITY(peer);
+		bool ll_nexthop_only = (nhlen == BGP_ATTR_NHLEN_IPV6_GLOBAL &&
+					PEER_HAS_LINK_LOCAL_CAPABILITY(peer));
 
 		gnh_modified = lnh_modified = 0;
 		mod_v6nhg = &v6nhglobal;
@@ -537,7 +538,7 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 		}
 
 		if (nhlen == BGP_ATTR_NHLEN_IPV6_GLOBAL_AND_LL ||
-		    nhlen == BGP_ATTR_NHLEN_VPNV6_GLOBAL_AND_LL || ll_nexthop_only) {
+		    nhlen == BGP_ATTR_NHLEN_VPNV6_GLOBAL_AND_LL) {
 			stream_get_from(&v6nhlocal, s, offset_nhlocal,
 					IPV6_MAX_BYTELEN);
 			if (IN6_IS_ADDR_UNSPECIFIED(&v6nhlocal)) {
@@ -546,7 +547,13 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 			}
 		}
 
-		if (lnh_modified && ll_nexthop_only) {
+		/* If link-local next-hop capability is negotiated, then
+		 * we have to ensure that the link-local next-hop is set
+		 * to the peer's link-local address, and not the `::`.
+		 * Here it comes as nhlen == 16 (not 32).
+		 */
+		if (ll_nexthop_only) {
+			mod_v6nhl = &peer->nexthop.v6_local;
 			stream_put_in6_addr_at(s, offset_nhlocal, mod_v6nhl);
 		} else {
 			if (gnh_modified)
@@ -557,7 +564,7 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 
 		if (bgp_debug_update(peer, NULL, NULL, 0)) {
 			if (nhlen == BGP_ATTR_NHLEN_IPV6_GLOBAL_AND_LL ||
-			    nhlen == BGP_ATTR_NHLEN_VPNV6_GLOBAL_AND_LL || ll_nexthop_only)
+			    nhlen == BGP_ATTR_NHLEN_VPNV6_GLOBAL_AND_LL)
 				zlog_debug(
 					"u%" PRIu64 ":s%" PRIu64
 					" %s send UPDATE w/ mp_nexthops %pI6, %pI6%s",
@@ -567,6 +574,11 @@ struct stream *bpacket_reformat_for_peer(struct bpacket *pkt,
 					(nhlen == BGP_ATTR_NHLEN_VPNV6_GLOBAL_AND_LL
 						 ? " and RD"
 						 : ""));
+			else if (ll_nexthop_only)
+				zlog_debug("u%" PRIu64 ":s%" PRIu64
+					   " %s send UPDATE w/ mp_nexthop (link-local only) %pI6",
+					   PAF_SUBGRP(paf)->update_group->id, PAF_SUBGRP(paf)->id,
+					   peer->host, mod_v6nhl);
 			else
 				zlog_debug(
 					"u%" PRIu64 ":s%" PRIu64
@@ -669,7 +681,8 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 	int addpath_overhead = 0;
 	uint32_t addpath_tx_id = 0;
 	struct prefix_rd *prd = NULL;
-	mpls_label_t label = MPLS_INVALID_LABEL, *label_pnt = NULL;
+	mpls_label_t *label_pnt = NULL;
+	mpls_label_t labels[BGP_MAX_LABELS] = { MPLS_INVALID_LABEL };
 	uint8_t num_labels = 0;
 
 	if (!subgrp)
@@ -745,7 +758,8 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 			 * attr. */
 			total_attr_len = bgp_packet_attribute(NULL, peer, s, adv->baa->attr,
 							      &vecarr, NULL, afi, safi, from, NULL,
-							      NULL, 0, 0, 0);
+							      NULL, 0, dest->srv6_unicast, 0, 0,
+							      path);
 
 			space_remaining =
 				STREAM_CONCAT_REMAIN(s, snlri, STREAM_SIZE(s))
@@ -764,9 +778,11 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 					subgrp->update_group->id, subgrp->id);
 
 				/* Flush the FIFO update queue */
-				while (adv)
-					adv = bgp_advertise_clean_subgroup(
-						subgrp, adj);
+				while (adv) {
+					struct bgp_adj_out *curr_adj = adv->adj;
+
+					adv = bgp_advertise_clean_subgroup(subgrp, curr_adj);
+				}
 				return NULL;
 			}
 
@@ -781,8 +797,8 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 
 		if ((afi == AFI_IP && safi == SAFI_UNICAST)
 		    && !peer_cap_enhe(peer, afi, safi))
-			stream_put_prefix_addpath(s, dest_p, addpath_capable,
-						  addpath_tx_id);
+			bgp_attr_stream_put_prefix_addpath(s, dest_p, addpath_capable,
+							   addpath_tx_id);
 		else {
 			/* Encode the prefix in MP_REACH_NLRI attribute */
 			if (dest->pdest)
@@ -790,10 +806,8 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 					dest->pdest);
 
 			if (safi == SAFI_LABELED_UNICAST) {
-				label = bgp_adv_label(dest, path, peer, afi,
-						      safi);
-				label_pnt = &label;
-				num_labels = 1;
+				bgp_adv_label(dest, path, peer, afi, safi, labels, &num_labels);
+				label_pnt = &labels[0];
 			} else if (safi == SAFI_MPLS_VPN && path &&
 				   CHECK_FLAG(path->flags,
 					      BGP_PATH_MPLSVPN_NH_LABEL_BIND) &&
@@ -813,9 +827,8 @@ struct bpacket *subgroup_update_packet(struct update_subgroup *subgrp)
 				 * called here, 'get_label()' returns a valid
 				 * label.
 				 */
-				label = bgp_mplsvpn_nh_label_bind_get_label(
-					path);
-				label_pnt = &label;
+				labels[0] = bgp_mplsvpn_nh_label_bind_get_label(path);
+				label_pnt = &labels[0];
 				num_labels = 1;
 			} else {
 				num_labels = BGP_PATH_INFO_NUM_LABELS(path);
@@ -990,8 +1003,8 @@ struct bpacket *subgroup_withdraw_packet(struct update_subgroup *subgrp)
 
 		if (afi == AFI_IP && safi == SAFI_UNICAST
 		    && !peer_cap_enhe(peer, afi, safi))
-			stream_put_prefix_addpath(s, dest_p, addpath_capable,
-						  addpath_tx_id);
+			bgp_attr_stream_put_prefix_addpath(s, dest_p, addpath_capable,
+							   addpath_tx_id);
 		else {
 			if (dest->pdest)
 				prd = (struct prefix_rd *)bgp_dest_get_prefix(
@@ -1155,8 +1168,8 @@ void subgroup_default_update_packet(struct update_subgroup *subgrp,
 	pos = stream_get_endp(s);
 	stream_putw(s, 0);
 	total_attr_len = bgp_packet_attribute(NULL, peer, s, attr, &vecarr, &p, afi, safi, from,
-					      NULL, &label, num_labels, addpath_capable,
-					      BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
+					      NULL, &label, num_labels, 0, addpath_capable,
+					      BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE, NULL);
 
 	/* Set Total Path Attribute Length. */
 	stream_putw_at(s, pos, total_attr_len);
@@ -1164,9 +1177,8 @@ void subgroup_default_update_packet(struct update_subgroup *subgrp,
 	/* NLRI set. */
 	if (p.family == AF_INET && safi == SAFI_UNICAST
 	    && !peer_cap_enhe(peer, afi, safi))
-		stream_put_prefix_addpath(
-			s, &p, addpath_capable,
-			BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
+		bgp_attr_stream_put_prefix_addpath(s, &p, addpath_capable,
+						   BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
 
 	/* Set size. */
 	bgp_packet_set_size(s);
@@ -1214,7 +1226,7 @@ void subgroup_default_withdraw_packet(struct update_subgroup *subgrp)
 		 * +/- (just in case)         +  1
 		 * null terminator            +  1
 		 * ============================ 29 */
-		char tx_id_buf[30];
+		char tx_id_buf[30] = {};
 
 		if (addpath_capable)
 			snprintf(tx_id_buf, sizeof(tx_id_buf),
@@ -1239,9 +1251,8 @@ void subgroup_default_withdraw_packet(struct update_subgroup *subgrp)
 	/* Withdrawn Routes. */
 	if (p.family == AF_INET && safi == SAFI_UNICAST
 	    && !peer_cap_enhe(peer, afi, safi)) {
-		stream_put_prefix_addpath(
-			s, &p, addpath_capable,
-			BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
+		bgp_attr_stream_put_prefix_addpath(s, &p, addpath_capable,
+						   BGP_ADDPATH_TX_ID_FOR_DEFAULT_ORIGINATE);
 
 		unfeasible_len = stream_get_endp(s) - cp - 2;
 

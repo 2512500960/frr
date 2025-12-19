@@ -74,7 +74,7 @@ struct zebra_neigh {
 	enum zebra_neigh_state state;
 
 	/* Remote VTEP IP - applicable only for remote neighbors. */
-	struct in_addr r_vtep_ip;
+	struct ipaddr r_vtep_ip;
 
 	/*
 	 * Mobility sequence numbers associated with this entry. The rem_seq
@@ -120,11 +120,12 @@ struct neigh_walk_ctx {
 #define DEL_REMOTE_NEIGH_FROM_VTEP 0x4
 #define SHOW_REMOTE_NEIGH_FROM_VTEP 0x8
 
-	struct in_addr r_vtep_ip; /* To walk neighbors from specific VTEP */
+	struct ipaddr r_vtep_ip; /* To walk neighbors from specific VTEP */
 
 	struct vty *vty;	  /* Used by VTY handlers */
 	uint32_t count;		  /* Used by VTY handlers */
 	uint8_t addr_width;       /* Used by VTY handlers */
+	uint8_t r_vtep_width;	  /* Used by VTY handlers */
 	struct json_object *json; /* Used for JSON Output */
 };
 
@@ -158,7 +159,7 @@ static inline void zebra_evpn_neigh_stop_hold_timer(struct zebra_neigh *n)
 	if (IS_ZEBRA_DEBUG_EVPN_MH_NEIGH)
 		zlog_debug("sync-neigh vni %u ip %pIA mac %pEA 0x%x hold stop",
 			   n->zevpn->vni, &n->ip, &n->emac, n->flags);
-	EVENT_OFF(n->hold_timer);
+	event_cancel(&n->hold_timer);
 }
 
 void zebra_evpn_sync_neigh_static_chg(struct zebra_neigh *n, bool old_n_static,
@@ -256,12 +257,9 @@ void zebra_evpn_print_neigh_hash_detail(struct hash_bucket *bucket, void *ctxt);
 void zebra_evpn_print_dad_neigh_hash(struct hash_bucket *bucket, void *ctxt);
 void zebra_evpn_print_dad_neigh_hash_detail(struct hash_bucket *bucket,
 					    void *ctxt);
-void zebra_evpn_neigh_remote_macip_add(struct zebra_evpn *zevpn,
-				       struct zebra_vrf *zvrf,
-				       const struct ipaddr *ipaddr,
-				       struct zebra_mac *mac,
-				       struct in_addr vtep_ip, uint8_t flags,
-				       uint32_t seq);
+void zebra_evpn_neigh_remote_macip_add(struct zebra_evpn *zevpn, struct zebra_vrf *zvrf,
+				       const struct ipaddr *ipaddr, struct zebra_mac *mac,
+				       struct ipaddr *vtep_ip, uint8_t flags, uint32_t seq);
 int zebra_evpn_neigh_gw_macip_add(struct interface *ifp,
 				  struct zebra_evpn *zevpn, struct ipaddr *ip,
 				  struct zebra_mac *mac);

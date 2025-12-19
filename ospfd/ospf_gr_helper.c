@@ -329,9 +329,9 @@ static int ospf_extract_grace_lsa_fields(struct ospf_lsa *lsa,
  * Returns:
  *    Nothing
  */
-static void ospf_handle_grace_timer_expiry(struct event *thread)
+static void ospf_handle_grace_timer_expiry(struct event *event)
 {
-	struct ospf_neighbor *nbr = EVENT_ARG(thread);
+	struct ospf_neighbor *nbr = EVENT_ARG(event);
 
 	nbr->gr_helper_info.t_grace_timer = NULL;
 
@@ -463,11 +463,11 @@ int ospf_process_grace_lsa(struct ospf *ospf, struct ospf_lsa *lsa,
 	}
 
 	/*LSA age must be less than the grace period */
-	if (ntohs(lsa->data->ls_age) >= grace_interval) {
+	if (LS_AGE_RAW(lsa) >= grace_interval) {
 		if (IS_DEBUG_OSPF_GR)
 			zlog_debug(
 				"%s, Grace LSA age(%d) is more than the grace interval(%d)",
-				__func__, lsa->data->ls_age, grace_interval);
+				__func__, LS_AGE_RAW(lsa), grace_interval);
 		restarter->gr_helper_info.rejected_reason =
 			OSPF_HELPER_LSA_AGE_MORE;
 		return OSPF_GR_NOT_HELPER;
@@ -500,7 +500,7 @@ int ospf_process_grace_lsa(struct ospf *ospf, struct ospf_lsa *lsa,
 
 	if (OSPF_GR_IS_ACTIVE_HELPER(restarter)) {
 		if (restarter->gr_helper_info.t_grace_timer)
-			EVENT_OFF(restarter->gr_helper_info.t_grace_timer);
+			event_cancel(&restarter->gr_helper_info.t_grace_timer);
 
 		if (ospf->active_restarter_cnt > 0)
 			ospf->active_restarter_cnt--;
@@ -699,7 +699,7 @@ void ospf_gr_helper_exit(struct ospf_neighbor *nbr,
 	 * expiry, stop the grace timer.
 	 */
 	if (reason != OSPF_GR_HELPER_GRACE_TIMEOUT)
-		EVENT_OFF(nbr->gr_helper_info.t_grace_timer);
+		event_cancel(&nbr->gr_helper_info.t_grace_timer);
 
 	/* check exit triggered due to successful completion
 	 * of graceful restart.

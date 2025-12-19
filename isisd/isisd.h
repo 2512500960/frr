@@ -33,6 +33,7 @@ DECLARE_MGROUP(ISISD);
 static const bool fabricd = true;
 #define PROTO_TYPE ZEBRA_ROUTE_OPENFABRIC
 #define PROTO_NAME "openfabric"
+#define PROTO_NICE_NAME "OpenFabric"
 #define PROTO_HELP "OpenFabric routing protocol\n"
 #define PROTO_REDIST_STR FRR_REDIST_STR_FABRICD
 #define PROTO_IP_REDIST_STR FRR_IP_REDIST_STR_FABRICD
@@ -45,6 +46,7 @@ static const bool fabricd = true;
 static const bool fabricd = false;
 #define PROTO_TYPE ZEBRA_ROUTE_ISIS
 #define PROTO_NAME "isis"
+#define PROTO_NICE_NAME "ISIS"
 #define PROTO_HELP "IS-IS routing protocol\n"
 #define PROTO_HELP_REDIST     "Intermediate System to Intermediate System (IS-IS)\n"
 #define PROTO_REDIST_STR FRR_REDIST_STR_ISISD
@@ -56,6 +58,7 @@ static const bool fabricd = false;
 #define ROUTER_NODE ISIS_NODE
 extern void isis_cli_init(void);
 #endif
+
 
 #define ISIS_FIND_VRF_ARGS(argv, argc, idx_vrf, vrf_name, all_vrf)             \
 	if (argv_find(argv, argc, "vrf", &idx_vrf)) {                          \
@@ -77,9 +80,9 @@ struct isis_master {
 	struct event_loop *master;
 	/* Various global options */
 	uint8_t options;
-#define ISIS_OPT_DUMMY_AS_LOOPBACK (1 << 0)
+#define F_ISIS_UNIT_TEST	   (1 << 0)
+#define ISIS_OPT_DUMMY_AS_LOOPBACK (1 << 1)
 };
-#define F_ISIS_UNIT_TEST 0x01
 
 #define ISIS_DEFAULT_MAX_AREA_ADDRESSES 3
 
@@ -304,7 +307,9 @@ int isis_area_get(struct vty *vty, const char *area_tag);
 void isis_area_destroy(struct isis_area *area);
 void isis_filter_update(struct access_list *access);
 void isis_prefix_list_update(struct prefix_list *plist);
-void print_debug(struct vty *, int, int);
+void print_debug_line(struct vty *vty, const char *config, int onoff, bool indent);
+void print_debug_with_indentation(struct vty *vty, int flags, int onoff, bool indent);
+void print_debug(struct vty *vty, int flags, int onoff);
 struct isis_lsp *lsp_for_sysid(struct lspdb_head *head, const char *sysid_str,
 			       struct isis *isis);
 

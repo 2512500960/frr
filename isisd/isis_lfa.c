@@ -1395,9 +1395,9 @@ static struct rlfa *rlfa_lookup(struct isis_spftree *spftree,
 	return rlfa_tree_find(&spftree->lfa.remote.rlfas, &s);
 }
 
-static void isis_area_verify_routes_cb(struct event *thread)
+static void isis_area_verify_routes_cb(struct event *event)
 {
-	struct isis_area *area = EVENT_ARG(thread);
+	struct isis_area *area = EVENT_ARG(event);
 
 	if (IS_DEBUG_LFA)
 		zlog_debug("ISIS-LFA: updating RLFAs in the RIB");
@@ -1513,7 +1513,7 @@ int isis_rlfa_activate(struct isis_spftree *spftree, struct rlfa *rlfa,
 			  spftree->route_table_backup);
 	spftree->lfa.protection_counters.rlfa[vertex->N.ip.priority] += 1;
 
-	EVENT_OFF(area->t_rlfa_rib_update);
+	event_cancel(&area->t_rlfa_rib_update);
 	event_add_timer(master, isis_area_verify_routes_cb, area, 2,
 			&area->t_rlfa_rib_update);
 
@@ -1532,7 +1532,7 @@ void isis_rlfa_deactivate(struct isis_spftree *spftree, struct rlfa *rlfa)
 	isis_route_delete(area, rn, spftree->route_table_backup);
 	spftree->lfa.protection_counters.rlfa[vertex->N.ip.priority] -= 1;
 
-	EVENT_OFF(area->t_rlfa_rib_update);
+	event_cancel(&area->t_rlfa_rib_update);
 	event_add_timer(master, isis_area_verify_routes_cb, area, 2,
 			&area->t_rlfa_rib_update);
 }

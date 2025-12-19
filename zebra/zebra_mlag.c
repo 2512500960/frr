@@ -37,7 +37,7 @@ static bool test_mlag_in_progress;
 
 static int zebra_mlag_signal_write_thread(void);
 static void zebra_mlag_terminate_pthread(struct event *event);
-static void zebra_mlag_post_data_from_main_thread(struct event *thread);
+static void zebra_mlag_post_data_from_main_thread(struct event *event);
 static void zebra_mlag_publish_process_state(struct zserv *client,
 					     zebra_message_types_t msg_type);
 
@@ -292,11 +292,10 @@ static void zebra_mlag_publish_process_state(struct zserv *client,
  * main thread, because for that access was needed for clients list.
  * so instead of forcing the locks, messages will be posted from main thread.
  */
-static void zebra_mlag_post_data_from_main_thread(struct event *thread)
+static void zebra_mlag_post_data_from_main_thread(struct event *event)
 {
-	struct stream *s = EVENT_ARG(thread);
+	struct stream *s = EVENT_ARG(event);
 	struct stream *zebra_s = NULL;
-	struct listnode *node;
 	struct zserv *client;
 	uint32_t msg_type = 0;
 	uint32_t msg_len = 0;
@@ -311,7 +310,7 @@ static void zebra_mlag_post_data_from_main_thread(struct event *thread)
 			__func__, msg_type);
 
 	msg_len = s->endp - ZEBRA_MLAG_METADATA_LEN;
-	for (ALL_LIST_ELEMENTS_RO(zrouter.client_list, node, client)) {
+	frr_each (zserv_client_list, &zrouter.client_list, client) {
 		if (client->mlag_updates_interested == true) {
 			if (msg_type != ZEBRA_MLAG_MSG_BCAST
 			    && !CHECK_FLAG(client->mlag_reg_mask1,

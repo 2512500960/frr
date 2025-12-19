@@ -26,6 +26,7 @@
 #include "mpls.h"
 #include "lib_errors.h"
 #include "hash.h"
+#include "lib/netlink_parser.h"
 
 #include "zebra/zebra_router.h"
 #include "zebra/zebra_ns.h"
@@ -49,17 +50,6 @@
 #ifndef MSG_TRUNC
 #define MSG_TRUNC      0x20
 #endif /* MSG_TRUNC */
-
-#ifndef NLMSG_TAIL
-#define NLMSG_TAIL(nmsg)                                                       \
-	((struct rtattr *)(((uint8_t *)(nmsg))                                 \
-			   + NLMSG_ALIGN((nmsg)->nlmsg_len)))
-#endif
-
-#ifndef RTA_TAIL
-#define RTA_TAIL(rta)                                                          \
-	((struct rtattr *)(((uint8_t *)(rta)) + RTA_ALIGN((rta)->rta_len)))
-#endif
 
 #ifndef RTNL_FAMILY_IP6MR
 #define RTNL_FAMILY_IP6MR 129
@@ -405,10 +395,6 @@ static int netlink_information_fetch(struct nlmsghdr *h, ns_id_t ns_id,
 		return netlink_route_change(h, ns_id, startup);
 	case RTM_DELROUTE:
 		return netlink_route_change(h, ns_id, startup);
-	case RTM_NEWNEIGH:
-	case RTM_DELNEIGH:
-	case RTM_GETNEIGH:
-		return netlink_neigh_change(h, ns_id);
 	case RTM_NEWRULE:
 		return netlink_rule_change(h, ns_id, startup);
 	case RTM_DELRULE:
@@ -445,6 +431,9 @@ static int netlink_information_fetch(struct nlmsghdr *h, ns_id_t ns_id,
 	case RTM_GETTUNNEL:
 	case RTM_NEWVLAN:
 	case RTM_DELVLAN:
+	case RTM_NEWNEIGH:
+	case RTM_DELNEIGH:
+	case RTM_GETNEIGH:
 		return 0;
 	default:
 		/*
@@ -492,6 +481,10 @@ static int dplane_netlink_information_fetch(struct nlmsghdr *h, ns_id_t ns_id,
 	case RTM_DELVLAN:
 		return netlink_vlan_change(h, ns_id, startup);
 
+	case RTM_NEWNEIGH:
+	case RTM_DELNEIGH:
+	case RTM_GETNEIGH:
+		return netlink_neigh_change(h, ns_id);
 	default:
 		break;
 	}
@@ -499,9 +492,9 @@ static int dplane_netlink_information_fetch(struct nlmsghdr *h, ns_id_t ns_id,
 	return 0;
 }
 
-static void kernel_read(struct event *thread)
+static void kernel_read(struct event *event)
 {
-	struct zebra_ns *zns = (struct zebra_ns *)EVENT_ARG(thread);
+	struct zebra_ns *zns = (struct zebra_ns *)EVENT_ARG(event);
 	struct zebra_dplane_info dp_info;
 
 	/* Capture key info from ns struct */
@@ -638,126 +631,6 @@ void netlink_parse_rtattr_flags(struct rtattr **tb, int max, struct rtattr *rta,
 	}
 }
 
-void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
-			  int len)
-{
-	memset(tb, 0, sizeof(struct rtattr *) * (max + 1));
-	while (RTA_OK(rta, len)) {
-		/*
-		 * The type may be &'ed with NLA_F_NESTED
-		 * which puts data in the upper 8 bits of the
-		 * rta_type.  Mask it off and save the actual
-		 * underlying value to be placed into the array.
-		 * This way we don't accidently crash in the future
-		 * when the kernel sends us new data and we try
-		 * to write well beyond the end of the array.
-		 */
-		uint16_t type = rta->rta_type & NLA_TYPE_MASK;
-
-		if (type <= max)
-			tb[type] = rta;
-		rta = RTA_NEXT(rta, len);
-	}
-}
-
-/**
- * netlink_parse_rtattr_nested() - Parses a nested route attribute
- * @tb:         Pointer to array for storing rtattr in.
- * @max:        Max number to store.
- * @rta:        Pointer to rtattr to look for nested items in.
- */
-void netlink_parse_rtattr_nested(struct rtattr **tb, int max,
-				 struct rtattr *rta)
-{
-	netlink_parse_rtattr(tb, max, RTA_DATA(rta), RTA_PAYLOAD(rta));
-}
-
-bool nl_attr_put(struct nlmsghdr *n, unsigned int maxlen, int type,
-		 const void *data, unsigned int alen)
-{
-	int len;
-	struct rtattr *rta;
-
-	len = RTA_LENGTH(alen);
-
-	if (NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(len) > maxlen)
-		return false;
-
-	rta = (struct rtattr *)(((char *)n) + NLMSG_ALIGN(n->nlmsg_len));
-	rta->rta_type = type;
-	rta->rta_len = len;
-
-	if (data)
-		memcpy(RTA_DATA(rta), data, alen);
-	else
-		assert(alen == 0);
-
-	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(len);
-
-	return true;
-}
-
-bool nl_attr_put8(struct nlmsghdr *n, unsigned int maxlen, int type,
-		  uint8_t data)
-{
-	return nl_attr_put(n, maxlen, type, &data, sizeof(uint8_t));
-}
-
-bool nl_attr_put16(struct nlmsghdr *n, unsigned int maxlen, int type,
-		   uint16_t data)
-{
-	return nl_attr_put(n, maxlen, type, &data, sizeof(uint16_t));
-}
-
-bool nl_attr_put32(struct nlmsghdr *n, unsigned int maxlen, int type,
-		   uint32_t data)
-{
-	return nl_attr_put(n, maxlen, type, &data, sizeof(uint32_t));
-}
-
-bool nl_attr_put64(struct nlmsghdr *n, unsigned int maxlen, int type,
-		   uint64_t data)
-{
-	return nl_attr_put(n, maxlen, type, &data, sizeof(uint64_t));
-}
-
-struct rtattr *nl_attr_nest(struct nlmsghdr *n, unsigned int maxlen, int type)
-{
-	struct rtattr *nest = NLMSG_TAIL(n);
-
-	if (!nl_attr_put(n, maxlen, type, NULL, 0))
-		return NULL;
-
-	nest->rta_type |= NLA_F_NESTED;
-	return nest;
-}
-
-int nl_attr_nest_end(struct nlmsghdr *n, struct rtattr *nest)
-{
-	nest->rta_len = (uint8_t *)NLMSG_TAIL(n) - (uint8_t *)nest;
-	return n->nlmsg_len;
-}
-
-struct rtnexthop *nl_attr_rtnh(struct nlmsghdr *n, unsigned int maxlen)
-{
-	struct rtnexthop *rtnh = (struct rtnexthop *)NLMSG_TAIL(n);
-
-	if (NLMSG_ALIGN(n->nlmsg_len) + RTNH_ALIGN(sizeof(struct rtnexthop))
-	    > maxlen)
-		return NULL;
-
-	memset(rtnh, 0, sizeof(struct rtnexthop));
-	n->nlmsg_len =
-		NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(sizeof(struct rtnexthop));
-
-	return rtnh;
-}
-
-void nl_attr_rtnh_end(struct nlmsghdr *n, struct rtnexthop *rtnh)
-{
-	rtnh->rtnh_len = (uint8_t *)NLMSG_TAIL(n) - (uint8_t *)rtnh;
-}
-
 const char *nl_msg_type_to_str(uint16_t msg_type)
 {
 	return lookup_msg(nlmsg_str, msg_type, "");
@@ -776,31 +649,6 @@ const char *nl_family_to_str(uint8_t family)
 const char *nl_rttype_to_str(uint8_t rttype)
 {
 	return lookup_msg(rttype_str, rttype, "");
-}
-
-#define NLA_OK(nla, len)                                                       \
-	((len) >= (int)sizeof(struct nlattr)                                   \
-	 && (nla)->nla_len >= sizeof(struct nlattr)                            \
-	 && (nla)->nla_len <= (len))
-#define NLA_NEXT(nla, attrlen)                                                 \
-	((attrlen) -= NLA_ALIGN((nla)->nla_len),                               \
-	 (struct nlattr *)(((char *)(nla)) + NLA_ALIGN((nla)->nla_len)))
-#define NLA_LENGTH(len) (NLA_ALIGN(sizeof(struct nlattr)) + (len))
-#define NLA_DATA(nla) ((struct nlattr *)(((char *)(nla)) + NLA_LENGTH(0)))
-
-#define ERR_NLA(err, inner_len)                                                \
-	((struct nlattr *)(((char *)(err))                                     \
-			   + NLMSG_ALIGN(sizeof(struct nlmsgerr))              \
-			   + NLMSG_ALIGN((inner_len))))
-
-static void netlink_parse_nlattr(struct nlattr **tb, int max,
-				 struct nlattr *nla, int len)
-{
-	while (NLA_OK(nla, len)) {
-		if (nla->nla_type <= max)
-			tb[nla->nla_type] = nla;
-		nla = NLA_NEXT(nla, len);
-	}
 }
 
 static void netlink_parse_extended_ack(struct nlmsghdr *h)
@@ -940,7 +788,7 @@ static int netlink_recv_msg(struct nlsock *nl, struct msghdr *msg)
 		 * In this case we are screwed. There is no good way to recover
 		 * zebra at this point.
 		 */
-		exit(-1);
+		frr_exit_with_buffer_flush(-1);
 	}
 
 	if (status == 0) {
@@ -1511,7 +1359,10 @@ enum netlink_msg_status netlink_batch_add_msg(
 	int seq;
 	ssize_t size;
 	struct nlmsghdr *msgh;
-	struct nlsock *nl;
+	struct nlsock *nl = kernel_netlink_nlsock_lookup(dplane_ctx_get_ns_sock(ctx));
+
+	if (!nl || nl->sock < 0 || !nl->buf)
+		return FRR_NETLINK_ERROR;
 
 	size = (*msg_encoder)(ctx, bth->buf_head, bth->bufsiz - bth->curlen);
 
@@ -1539,7 +1390,6 @@ enum netlink_msg_status netlink_batch_add_msg(
 	}
 
 	seq = dplane_ctx_get_ns(ctx)->seq;
-	nl = kernel_netlink_nlsock_lookup(dplane_ctx_get_ns_sock(ctx));
 
 	if (ignore_res)
 		seq++;
@@ -1772,17 +1622,14 @@ void kernel_init(struct zebra_ns *zns)
 	 * exist.
 	 */
 	groups = RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE | RTMGRP_IPV4_MROUTE |
-		 RTMGRP_NEIGH | ((uint32_t)1 << (RTNLGRP_IPV4_RULE - 1)) |
+		 ((uint32_t)1 << (RTNLGRP_IPV4_RULE - 1)) |
 		 ((uint32_t)1 << (RTNLGRP_IPV6_RULE - 1)) |
-		 ((uint32_t)1 << (RTNLGRP_NEXTHOP - 1)) |
-		 ((uint32_t)1 << (RTNLGRP_TC - 1));
+		 ((uint32_t)1 << (RTNLGRP_NEXTHOP - 1)) | ((uint32_t)1 << (RTNLGRP_TC - 1));
 
-	dplane_groups = (RTMGRP_LINK            |
-			 RTMGRP_IPV4_IFADDR     |
-			 RTMGRP_IPV6_IFADDR     |
-			 ((uint32_t) 1 << (RTNLGRP_IPV4_NETCONF - 1)) |
-			 ((uint32_t) 1 << (RTNLGRP_IPV6_NETCONF - 1)) |
-			 ((uint32_t) 1 << (RTNLGRP_MPLS_NETCONF - 1)));
+	dplane_groups = (RTMGRP_LINK | RTMGRP_NEIGH | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR |
+			 ((uint32_t)1 << (RTNLGRP_IPV4_NETCONF - 1)) |
+			 ((uint32_t)1 << (RTNLGRP_IPV6_NETCONF - 1)) |
+			 ((uint32_t)1 << (RTNLGRP_MPLS_NETCONF - 1)));
 
 	/* Use setsockopt for > 31 group */
 	ext_groups = RTNLGRP_TUNNEL;
@@ -1794,7 +1641,7 @@ void kernel_init(struct zebra_ns *zns)
 			   NETLINK_ROUTE) < 0) {
 		zlog_err("Failure to create %s socket",
 			 zns->netlink.name);
-		exit(-1);
+		frr_exit_with_buffer_flush(-1);
 	}
 
 	kernel_netlink_nlsock_insert(&zns->netlink);
@@ -1806,7 +1653,7 @@ void kernel_init(struct zebra_ns *zns)
 			   NETLINK_ROUTE) < 0) {
 		zlog_err("Failure to create %s socket",
 			 zns->netlink_cmd.name);
-		exit(-1);
+		frr_exit_with_buffer_flush(-1);
 	}
 
 	kernel_netlink_nlsock_insert(&zns->netlink_cmd);
@@ -1820,7 +1667,7 @@ void kernel_init(struct zebra_ns *zns)
 			   NETLINK_ROUTE) < 0) {
 		zlog_err("Failure to create %s socket",
 			 zns->netlink_dplane_out.name);
-		exit(-1);
+		frr_exit_with_buffer_flush(-1);
 	}
 
 	kernel_netlink_nlsock_insert(&zns->netlink_dplane_out);
@@ -1834,7 +1681,7 @@ void kernel_init(struct zebra_ns *zns)
 			   zns->ns_id, NETLINK_ROUTE) < 0) {
 		zlog_err("Failure to create %s socket",
 			 zns->netlink_dplane_in.name);
-		exit(-1);
+		frr_exit_with_buffer_flush(-1);
 	}
 
 	kernel_netlink_nlsock_insert(&zns->netlink_dplane_in);
@@ -1983,7 +1830,7 @@ static void kernel_nlsock_fini(struct nlsock *nls)
 
 void kernel_terminate(struct zebra_ns *zns, bool complete)
 {
-	EVENT_OFF(zns->t_netlink);
+	event_cancel(&zns->t_netlink);
 
 	kernel_nlsock_fini(&zns->netlink);
 
@@ -1996,11 +1843,8 @@ void kernel_terminate(struct zebra_ns *zns, bool complete)
 	/* During zebra shutdown, we need to leave the dataplane socket
 	 * around until all work is done.
 	 */
-	if (complete) {
+	if (complete)
 		kernel_nlsock_fini(&zns->netlink_dplane_out);
-
-		XFREE(MTYPE_NL_BUF, nl_batch_tx_buf);
-	}
 }
 
 /*
@@ -2020,6 +1864,8 @@ void kernel_router_init(void)
  */
 void kernel_router_terminate(void)
 {
+	XFREE(MTYPE_NL_BUF, nl_batch_tx_buf);
+
 	pthread_mutex_destroy(&nlsock_mutex);
 
 	hash_free(nlsock_hash);

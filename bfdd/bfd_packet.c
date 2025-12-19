@@ -415,6 +415,11 @@ static int ptm_bfd_process_echo_pkt(struct bfd_vrf_global *bvrf, int s)
 
 void ptm_bfd_snd(struct bfd_session *bfd, int fbit)
 {
+	/* Check for passive mode with zero discriminator */
+	if (bfd->discrs.remote_discr == 0 && 
+		CHECK_FLAG(bfd->flags, BFD_SESS_FLAG_PASSIVE))
+		return;
+
 	struct bfd_pkt cp = {};
 
 	/* Set fields according to section 6.5.7 */
@@ -738,31 +743,31 @@ ssize_t bfd_recv_ipv6(int sd, uint8_t *msgbuf, size_t msgbuflen, uint8_t *ttl,
 static void bfd_sd_reschedule(struct bfd_vrf_global *bvrf, int sd)
 {
 	if (sd == bvrf->bg_shop) {
-		EVENT_OFF(bvrf->bg_ev[0]);
+		event_cancel(&bvrf->bg_ev[0]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_shop,
 			       &bvrf->bg_ev[0]);
 	} else if (sd == bvrf->bg_mhop) {
-		EVENT_OFF(bvrf->bg_ev[1]);
+		event_cancel(&bvrf->bg_ev[1]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_mhop,
 			       &bvrf->bg_ev[1]);
 	} else if (sd == bvrf->bg_shop6) {
-		EVENT_OFF(bvrf->bg_ev[2]);
+		event_cancel(&bvrf->bg_ev[2]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_shop6,
 			       &bvrf->bg_ev[2]);
 	} else if (sd == bvrf->bg_mhop6) {
-		EVENT_OFF(bvrf->bg_ev[3]);
+		event_cancel(&bvrf->bg_ev[3]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_mhop6,
 			       &bvrf->bg_ev[3]);
 	} else if (sd == bvrf->bg_echo) {
-		EVENT_OFF(bvrf->bg_ev[4]);
+		event_cancel(&bvrf->bg_ev[4]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_echo,
 			       &bvrf->bg_ev[4]);
 	} else if (sd == bvrf->bg_echov6) {
-		EVENT_OFF(bvrf->bg_ev[5]);
+		event_cancel(&bvrf->bg_ev[5]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_echov6,
 			       &bvrf->bg_ev[5]);
 	} else if (sd == bvrf->bg_initv6) {
-		EVENT_OFF(bvrf->bg_ev[6]);
+		event_cancel(&bvrf->bg_ev[6]);
 		event_add_read(master, bfd_recv_cb, bvrf, bvrf->bg_initv6, &bvrf->bg_ev[6]);
 	}
 }
@@ -1366,18 +1371,17 @@ static void bp_set_ipopts(int sd)
 	int rcvttl = BFD_RCV_TTL_VAL;
 
 	if (!bp_set_reuse_addr(sd))
-		zlog_fatal("set-reuse-addr: failed");
+		zlog_err("set-reuse-addr: failed");
 
 	if (!bp_set_reuse_port(sd))
-		zlog_fatal("set-reuse-port: failed");
+		zlog_err("set-reuse-port: failed");
 
 	if (bp_set_ttl(sd, BFD_TTL_VAL) != 0)
-		zlog_fatal("set-ipopts: TTL configuration failed");
+		zlog_err("set-ipopts: TTL configuration failed");
 
 	if (setsockopt(sd, IPPROTO_IP, IP_RECVTTL, &rcvttl, sizeof(rcvttl))
 	    == -1)
-		zlog_fatal("set-ipopts: setsockopt(IP_RECVTTL, %d): %s", rcvttl,
-			   strerror(errno));
+		zlog_err("set-ipopts: setsockopt(IP_RECVTTL, %d): %s", rcvttl, strerror(errno));
 
 #ifdef BFD_LINUX
 	int pktinfo = BFD_PKT_INFO_VAL;
@@ -1385,21 +1389,18 @@ static void bp_set_ipopts(int sd)
 	/* Figure out address and interface to do the peer matching. */
 	if (setsockopt(sd, IPPROTO_IP, IP_PKTINFO, &pktinfo, sizeof(pktinfo))
 	    == -1)
-		zlog_fatal("set-ipopts: setsockopt(IP_PKTINFO, %d): %s",
-			   pktinfo, strerror(errno));
+		zlog_err("set-ipopts: setsockopt(IP_PKTINFO, %d): %s", pktinfo, strerror(errno));
 #endif /* BFD_LINUX */
 #ifdef BFD_BSD
 	int yes = 1;
 
 	/* Find out our address for peer matching. */
 	if (setsockopt(sd, IPPROTO_IP, IP_RECVDSTADDR, &yes, sizeof(yes)) == -1)
-		zlog_fatal("set-ipopts: setsockopt(IP_RECVDSTADDR, %d): %s",
-			   yes, strerror(errno));
+		zlog_err("set-ipopts: setsockopt(IP_RECVDSTADDR, %d): %s", yes, strerror(errno));
 
 	/* Find out interface where the packet came in. */
 	if (setsockopt_ifindex(AF_INET, sd, yes) == -1)
-		zlog_fatal("set-ipopts: setsockopt_ipv4_ifindex(%d): %s", yes,
-			   strerror(errno));
+		zlog_err("set-ipopts: setsockopt_ipv4_ifindex(%d): %s", yes, strerror(errno));
 #endif /* BFD_BSD */
 }
 
@@ -1412,7 +1413,7 @@ static void bp_bind_ip(int sd, uint16_t port)
 	sin.sin_addr.s_addr = htonl(INADDR_ANY);
 	sin.sin_port = htons(port);
 	if (bind(sd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
-		zlog_fatal("bind-ip: bind: %s", strerror(errno));
+		zlog_err("bind-ip: bind: %s", strerror(errno));
 }
 
 void bp_set_prio(int sd, int value)
@@ -1433,8 +1434,10 @@ int bp_udp_shop(const struct vrf *vrf)
 		sd = vrf_socket(AF_INET, SOCK_DGRAM, PF_UNSPEC, vrf->vrf_id,
 				vrf->name);
 	}
-	if (sd == -1)
-		zlog_fatal("udp-shop: socket: %s", strerror(errno));
+	if (sd < 0) {
+		zlog_err("udp-shop: socket: %s", strerror(errno));
+		return sd;
+	}
 
 	bp_set_ipopts(sd);
 	bp_bind_ip(sd, BFD_DEFDESTPORT);
@@ -1449,8 +1452,10 @@ int bp_udp_mhop(const struct vrf *vrf)
 		sd = vrf_socket(AF_INET, SOCK_DGRAM, PF_UNSPEC, vrf->vrf_id,
 				vrf->name);
 	}
-	if (sd == -1)
-		zlog_fatal("udp-mhop: socket: %s", strerror(errno));
+	if (sd < 0) {
+		zlog_err("udp-mhop: socket: %s", strerror(errno));
+		return sd;
+	}
 
 	bp_set_ipopts(sd);
 	bp_bind_ip(sd, BFD_DEF_MHOP_DEST_PORT);
@@ -1625,29 +1630,28 @@ static void bp_set_ipv6opts(int sd)
 	int ipv6_only = BFD_IPV6_ONLY_VAL;
 
 	if (!bp_set_reuse_addr(sd))
-		zlog_fatal("set-reuse-addr: failed");
+		zlog_err("set-reuse-addr: failed");
 
 	if (!bp_set_reuse_port(sd))
-		zlog_fatal("set-reuse-port: failed");
+		zlog_err("set-reuse-port: failed");
 
 	if (bp_set_ttlv6(sd, BFD_TTL_VAL) == -1)
-		zlog_fatal(
-			"set-ipv6opts: setsockopt(IPV6_UNICAST_HOPS, %d): %s",
-			BFD_TTL_VAL, strerror(errno));
+		zlog_err("set-ipv6opts: setsockopt(IPV6_UNICAST_HOPS, %d): %s", BFD_TTL_VAL,
+			 strerror(errno));
 
 	if (setsockopt_ipv6_hoplimit(sd, BFD_RCV_TTL_VAL) == -1)
-		zlog_fatal("set-ipv6opts: setsockopt(IPV6_HOPLIMIT, %d): %s",
-			   BFD_RCV_TTL_VAL, strerror(errno));
+		zlog_err("set-ipv6opts: setsockopt(IPV6_HOPLIMIT, %d): %s", BFD_RCV_TTL_VAL,
+			 strerror(errno));
 
 	if (setsockopt_ipv6_pktinfo(sd, ipv6_pktinfo) == -1)
-		zlog_fatal("set-ipv6opts: setsockopt(IPV6_PKTINFO, %d): %s",
-			   ipv6_pktinfo, strerror(errno));
+		zlog_err("set-ipv6opts: setsockopt(IPV6_PKTINFO, %d): %s", ipv6_pktinfo,
+			 strerror(errno));
 
 	if (setsockopt(sd, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6_only,
 		       sizeof(ipv6_only))
 	    == -1)
-		zlog_fatal("set-ipv6opts: setsockopt(IPV6_V6ONLY, %d): %s",
-			   ipv6_only, strerror(errno));
+		zlog_err("set-ipv6opts: setsockopt(IPV6_V6ONLY, %d): %s", ipv6_only,
+			 strerror(errno));
 }
 
 static void bp_bind_ipv6(int sd, uint16_t port)
@@ -1662,7 +1666,7 @@ static void bp_bind_ipv6(int sd, uint16_t port)
 	sin6.sin6_len = sizeof(sin6);
 #endif /* HAVE_STRUCT_SOCKADDR_SA_LEN */
 	if (bind(sd, (struct sockaddr *)&sin6, sizeof(sin6)) == -1)
-		zlog_fatal("bind-ipv6: bind: %s", strerror(errno));
+		zlog_err("bind-ipv6: bind: %s", strerror(errno));
 }
 
 int bp_udp6_shop(const struct vrf *vrf)
@@ -1675,7 +1679,7 @@ int bp_udp6_shop(const struct vrf *vrf)
 	}
 	if (sd == -1) {
 		if (errno != EAFNOSUPPORT)
-			zlog_fatal("udp6-shop: socket: %s", strerror(errno));
+			zlog_err("udp6-shop: socket: %s", strerror(errno));
 		else
 			zlog_warn("udp6-shop: V6 is not supported, continuing");
 
@@ -1698,7 +1702,7 @@ int bp_udp6_mhop(const struct vrf *vrf)
 	}
 	if (sd == -1) {
 		if (errno != EAFNOSUPPORT)
-			zlog_fatal("udp6-mhop: socket: %s", strerror(errno));
+			zlog_err("udp6-mhop: socket: %s", strerror(errno));
 		else
 			zlog_warn("udp6-mhop: V6 is not supported, continuing");
 
@@ -1734,7 +1738,7 @@ int bp_echo_socket(const struct vrf *vrf)
 	}
 
 	if (s == -1)
-		zlog_fatal("echo-socket: socket: %s", strerror(errno));
+		zlog_err("echo-socket: socket: %s", strerror(errno));
 
 	struct sock_fprog pf;
 	struct sockaddr_ll sll = {0};
@@ -1772,7 +1776,7 @@ int bp_echo_socket(const struct vrf *vrf)
 		s = vrf_socket(AF_INET, SOCK_DGRAM, 0, vrf->vrf_id, vrf->name);
 	}
 	if (s == -1)
-		zlog_fatal("echo-socket: socket: %s", strerror(errno));
+		zlog_err("echo-socket: socket: %s", strerror(errno));
 
 	bp_set_ipopts(s);
 	bp_bind_ip(s, BFD_DEF_ECHO_PORT);
@@ -1790,8 +1794,7 @@ int bp_echov6_socket(const struct vrf *vrf)
 	}
 	if (s == -1) {
 		if (errno != EAFNOSUPPORT)
-			zlog_fatal("echov6-socket: socket: %s",
-				   strerror(errno));
+			zlog_err("echov6-socket: socket: %s", strerror(errno));
 		else
 			zlog_warn("echov6-socket: V6 is not supported, continuing");
 
@@ -2132,7 +2135,7 @@ int bp_initv6_socket(const struct vrf *vrf)
 	}
 	if (sd == -1) {
 		if (errno != EAFNOSUPPORT)
-			zlog_fatal("echov6-socket: socket: %s", strerror(errno));
+			zlog_err("echov6-socket: socket: %s", strerror(errno));
 		else
 			zlog_warn("echov6-socket: V6 is not supported, continuing");
 
@@ -2336,7 +2339,7 @@ int bp_sbfd_socket(const struct vrf *vrf)
 	}
 	if (s == -1) {
 		if (errno != EAFNOSUPPORT)
-			zlog_fatal("sbfdv6-socket: socket: %s", strerror(errno));
+			zlog_err("sbfdv6-socket: socket: %s", strerror(errno));
 		else
 			zlog_warn("sbfdv6-socket: V6 is not supported, continuing");
 

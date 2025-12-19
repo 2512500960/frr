@@ -10,6 +10,7 @@ for the multicast group we subscribed to.
 """
 
 import argparse
+import ctypes
 import json
 import ipaddress
 import os
@@ -25,28 +26,46 @@ import time
 #
 def interface_name_to_index(name):
     "Gets the interface index using its name. Returns None on failure."
-    interfaces = json.loads(subprocess.check_output("ip -j link show", shell=True))
+    try:
+        interfaces = json.loads(subprocess.check_output("ip -j link show", shell=True))
+    except subprocess.CalledProcessError as err:
+        print(f"Error executing command: {err}")
+        return None
+    except json.JSONDecodeError as err:
+        print(f"Error decoding JSON: {err}")
+        return None
 
     for interface in interfaces:
-        if interface["ifname"] == name:
-            return interface["ifindex"]
+        if interface.get("ifname") == name:
+            return interface.get("ifindex")
 
     return None
 
 
 def interface_index_to_address(index, iptype="inet"):
     "Gets the interface main address using its name. Returns None on failure."
-    interfaces = json.loads(subprocess.check_output("ip -j addr show", shell=True))
+    try:
+        interfaces = json.loads(subprocess.check_output("ip -j addr show", shell=True))
+    except subprocess.CalledProcessError as err:
+        print(f"Error executing command: {err}")
+        return None
+    except json.JSONDecodeError as err:
+        print(f"Error decoding JSON: {err}")
+        return None
 
     for interface in interfaces:
-        if interface["ifindex"] == index:
+        if interface.get("ifindex") == index:
             break
+    else:
+        return None
 
-    for address in interface["addr_info"]:
-        if address["family"] == iptype:
+    for address in interface.get("addr_info"):
+        if address.get("family") == iptype:
             break
+    else:
+        return None
 
-    local_address = ipaddress.ip_address(address["local"])
+    local_address = ipaddress.ip_address(address.get("local"))
 
     return local_address.packed
 
@@ -71,6 +90,26 @@ def group_source_req(ifindex, group, source):
     return mreq + group_bytes + source_bytes + struct.pack("<4x")
 
 
+def group_source_req_32bit(ifindex, group, source):
+    "Packs the information into 'struct group_source_req' format."
+    mreq = struct.pack("<I", ifindex)
+    group_bytes = (
+        struct.pack("<HHI", socket.AF_INET6, 0, 0)
+        + group.packed
+        + struct.pack("<I", 0)
+    )
+    group_bytes += struct.pack(f"<{128 - len(group_bytes)}x")
+
+    source_bytes = (
+        struct.pack("<HHI", socket.AF_INET6, 0, 0)
+        + source.packed
+        + struct.pack("<I", 0)
+    )
+    source_bytes += struct.pack(f"<{128 - len(source_bytes)}x")
+
+    return mreq + group_bytes + source_bytes
+
+
 def multicast_join(sock, ifindex, group, port, source=None):
     "Joins a multicast group."
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -88,8 +127,10 @@ def multicast_join(sock, ifindex, group, port, source=None):
             mreq = group.packed + struct.pack("@I", ifindex)
             opt = socket.IPV6_JOIN_GROUP
         else:
-            mreq = group_source_req(ifindex, group, ipaddress.ip_address(source))
-            print(mreq)
+            if ctypes.sizeof(ctypes.c_voidp) == 4:
+                mreq = group_source_req_32bit(ifindex, group, ipaddress.ip_address(source))
+            else:
+                mreq = group_source_req(ifindex, group, ipaddress.ip_address(source))
             opt = 46
 
     sock.bind((str(group), port))

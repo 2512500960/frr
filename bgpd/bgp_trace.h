@@ -135,7 +135,8 @@ TRACEPOINT_LOGLEVEL(frr_bgp, bmp_mirror_packet, TRACE_INFO)
 TRACEPOINT_EVENT(
 	frr_bgp,
 	bmp_eor,
-	TP_ARGS(afi_t, afi, safi_t, safi, uint8_t, flags, uint8_t, peer_type_flag, bgp),
+	TP_ARGS(afi_t, afi, safi_t, safi, uint8_t, flags, uint8_t, peer_type_flag,
+		struct bgp *, bgp),
 	TP_FIELDS(
 		ctf_integer(afi_t, afi, afi)
 		ctf_integer(safi_t, safi, safi)
@@ -324,7 +325,7 @@ TRACEPOINT_EVENT(
 	evpn_mac_ip_zsend,
 	TP_ARGS(int, add, struct bgpevpn *, vpn,
 		const struct prefix_evpn *, pfx,
-		struct in_addr, vtep, esi_t *, esi),
+		struct ipaddr *, vtep, esi_t *, esi),
 	TP_FIELDS(
 		ctf_string(action, add ? "add" : "del")
 		ctf_integer(vni_t, vni, (vpn ? vpn->vni : 0))
@@ -333,7 +334,7 @@ TRACEPOINT_EVENT(
 			sizeof(struct ethaddr))
 		ctf_array(unsigned char, ip, &pfx->prefix.macip_addr.ip,
 			sizeof(struct ipaddr))
-		ctf_integer_network_hex(unsigned int, vtep, vtep.s_addr)
+		ctf_array(unsigned char, vtep, vtep, sizeof(struct ipaddr))
 		ctf_array(unsigned char, esi, esi, sizeof(esi_t))
 	)
 )
@@ -516,11 +517,11 @@ TRACEPOINT_LOGLEVEL(frr_bgp, evpn_mh_local_ead_es_evi_route_del, TRACE_INFO)
 TRACEPOINT_EVENT(
 	frr_bgp,
 	evpn_local_vni_add_zrecv,
-	TP_ARGS(vni_t, vni, struct in_addr, vtep, vrf_id_t, vrf,
+	TP_ARGS(vni_t, vni, struct ipaddr *, vtep, vrf_id_t, vrf,
 			struct in_addr, mc_grp),
 	TP_FIELDS(
 		ctf_integer(vni_t, vni, vni)
-		ctf_integer_network_hex(unsigned int, vtep, vtep.s_addr)
+		ctf_array(unsigned char, vtep, vtep, sizeof(struct ipaddr))
 		ctf_integer_network_hex(unsigned int, mc_grp,
 			mc_grp.s_addr)
 		ctf_integer(int, vrf, vrf)
@@ -577,14 +578,14 @@ TRACEPOINT_EVENT(
 	frr_bgp,
 	evpn_advertise_type5,
 	TP_ARGS(vrf_id_t, vrf, const struct prefix_evpn *, pfx,
-		struct ethaddr *, rmac, struct in_addr, vtep),
+		struct ethaddr *, rmac, struct ipaddr *, vtep),
 	TP_FIELDS(
 		ctf_integer(int, vrf_id, vrf)
 		ctf_array(unsigned char, ip, &pfx->prefix.prefix_addr.ip,
 			sizeof(struct ipaddr))
 		ctf_array(unsigned char, rmac, rmac,
 			sizeof(struct ethaddr))
-		ctf_integer_network_hex(unsigned int, vtep, vtep.s_addr)
+		ctf_array(unsigned char, vtep, vtep, sizeof(struct ipaddr))
 	)
 )
 TRACEPOINT_LOGLEVEL(frr_bgp, evpn_advertise_type5, TRACE_INFO)
@@ -607,7 +608,7 @@ TRACEPOINT_EVENT(
 	TP_ARGS(vni_t, vni, vrf_id_t, vrf,
 			struct ethaddr *, svi_rmac,
 			struct ethaddr *, vrr_rmac, int, filter,
-			struct in_addr, vtep, int, svi_ifindex,
+			struct ipaddr *, vtep, int, svi_ifindex,
 			bool, anycast_mac),
 	TP_FIELDS(
 		ctf_integer(vni_t, vni, vni)
@@ -616,7 +617,7 @@ TRACEPOINT_EVENT(
 			sizeof(struct ethaddr))
 		ctf_array(unsigned char, vrr_rmac, vrr_rmac,
 			sizeof(struct ethaddr))
-		ctf_integer_network_hex(unsigned int, vtep, vtep.s_addr)
+		ctf_array(unsigned char, vtep, vtep, sizeof(struct ipaddr))
 		ctf_integer(int, filter, filter)
 		ctf_integer(int, svi_ifindex, svi_ifindex)
 		ctf_string(anycast_mac, anycast_mac ? "y" : "n")
@@ -634,6 +635,96 @@ TRACEPOINT_EVENT(
 	)
 )
 TRACEPOINT_LOGLEVEL(frr_bgp, evpn_local_l3vni_del_zrecv, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	eor_send,
+	TP_ARGS(char *, bgp_name, uint8_t, afi, uint8_t, safi,
+		char *, peer_name),
+	TP_FIELDS(ctf_string(bgp_instance, bgp_name)
+		ctf_integer(uint8_t, afi, afi)
+		ctf_integer(uint8_t, safi, safi)
+		ctf_string(peer, peer_name)
+	)
+)
+TRACEPOINT_LOGLEVEL(frr_bgp, eor_send, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	eor_received,
+	TP_ARGS(char *, bgp_name, uint8_t, afi, uint8_t, safi,
+		char *, peer_name),
+	TP_FIELDS(ctf_string(bgp_instance, bgp_name)
+		ctf_integer(uint8_t, afi, afi)
+		ctf_integer(uint8_t, safi, safi)
+		ctf_string(peer, peer_name)
+	)
+)
+TRACEPOINT_LOGLEVEL(frr_bgp, eor_received, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	gr_bgp_state,
+	TP_ARGS(char *, bgp_name, bool, all_peers_admin_down, bool, bgp_in_gr,
+		uint8_t, global_gr_mode, bool, gr_cfgd_at_nbr_lvl),
+	TP_FIELDS(ctf_string(bgp_instance, bgp_name)
+		ctf_integer(bool, all_peers_admin_down, all_peers_admin_down)
+		ctf_integer(bool, bgp_in_gr, bgp_in_gr)
+		ctf_integer(uint8_t, global_gr_mode, global_gr_mode)
+		ctf_integer(bool, gr_cfgd_at_nbr_lvl, gr_cfgd_at_nbr_lvl)
+	)
+)
+TRACEPOINT_LOGLEVEL(frr_bgp, gr_bgp_state, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	session_state_change,
+	TP_ARGS(struct peer *, peer, uint8_t, location),
+	TP_FIELDS(
+		ctf_string(peer, PEER_HOSTNAME(peer))
+		ctf_integer(uint8_t, location, location)
+		ctf_integer(enum bgp_fsm_status, old_status, peer->connection->ostatus)
+		ctf_integer(enum bgp_fsm_status, new_status, peer->connection->status)
+		ctf_integer(enum bgp_fsm_events, event, peer->cur_event)
+		ctf_integer(uint32_t, vrf_id, peer->bgp->vrf_id)
+		ctf_integer(int, fd, peer->connection->fd)
+		ctf_integer(uint32_t, established_peers, peer->bgp->established_peers)
+	)
+)
+
+TRACEPOINT_LOGLEVEL(frr_bgp, session_state_change, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	connection_attempt,
+	TP_ARGS(struct peer *, peer, int, status),
+	TP_FIELDS(
+		ctf_string(peer, PEER_HOSTNAME(peer))
+		ctf_integer(int, status, status)
+		ctf_integer(enum bgp_fsm_status, current_status, peer->connection->status)
+		ctf_integer(uint32_t, vrf_id, peer->bgp->vrf_id)
+		ctf_integer(int, fd, peer->connection->fd)
+	)
+)
+
+TRACEPOINT_LOGLEVEL(frr_bgp, connection_attempt, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+	frr_bgp,
+	fsm_event,
+	TP_ARGS(struct peer *, peer, enum bgp_fsm_events, event, enum bgp_fsm_status, current_status, enum bgp_fsm_status, next_status, int, fd),
+	TP_FIELDS(
+		ctf_string(peer, PEER_HOSTNAME(peer))
+		ctf_integer(enum bgp_fsm_events, event, event)
+		ctf_integer(enum bgp_fsm_status, current_status, current_status)
+		ctf_integer(enum bgp_fsm_status, next_status, next_status)
+		ctf_integer(int, fd, fd)
+		ctf_integer(uint32_t, vrf_id, peer->bgp->vrf_id)
+	)
+)
+
+TRACEPOINT_LOGLEVEL(frr_bgp, fsm_event, TRACE_INFO)
+
 /* clang-format on */
 
 #include <lttng/tracepoint-event.h>

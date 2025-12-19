@@ -25,7 +25,8 @@
 #include "zebra/kernel_netlink.h"
 #include "zebra/zebra_router.h"
 #include "zebra/zebra_srv6.h"
-
+#include "zebra/zebra_dplane.h"
+#include "lib/netlink_parser.h"
 
 /**
  * This file provides an implementation of the functionality exposed by the

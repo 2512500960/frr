@@ -688,8 +688,9 @@ int pim_register_recv(struct interface *ifp, pim_addr dest_addr,
 		    (PIM_UPSTREAM_FLAG_TEST_FHR(upstream->flags) && i_am_rp) ||
 		    ((SwitchToSptDesiredOnRp(pim, &sg)) &&
 		     pim_upstream_inherited_olist(pim, upstream) == 0)) {
-			zlog_debug("sending pim register stop message :  %s ",
-				   upstream->sg_str);
+			if (PIM_DEBUG_PIM_REG)
+				zlog_debug("sending pim register stop message :  %s ",
+					   upstream->sg_str);
 			pim_register_stop_send(ifp, &sg, dest_addr, src_addr);
 			sentRegisterStop = 1;
 		} else {
@@ -756,7 +757,7 @@ void pim_reg_del_on_couldreg_fail(struct interface *ifp)
 		    && (up->reg_state != PIM_REG_NOINFO)) {
 			pim_channel_del_oif(up->channel_oil, pim->regiface,
 					    PIM_OIF_FLAG_PROTO_PIM, __func__);
-			EVENT_OFF(up->t_rs_timer);
+			event_cancel(&up->t_rs_timer);
 			up->reg_state = PIM_REG_NOINFO;
 			PIM_UPSTREAM_FLAG_UNSET_FHR(up->flags);
 		}

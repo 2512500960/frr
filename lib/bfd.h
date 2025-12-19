@@ -8,7 +8,6 @@
 #ifndef _ZEBRA_BFD_H
 #define _ZEBRA_BFD_H
 
-#include "lib/json.h"
 #include "lib/zclient.h"
 
 #ifdef __cplusplus
@@ -18,6 +17,7 @@ extern "C" {
 #define BFD_DEF_MIN_RX 300
 #define BFD_DEF_MIN_TX 300
 #define BFD_DEF_DETECT_MULT 3
+#define BFD_DEF_STRICT_HOLD_TIME 30 /* seconds */
 
 #define BFD_STATUS_UNKNOWN    (1 << 0) /* BFD session status never received */
 #define BFD_STATUS_DOWN       (1 << 1) /* BFD session status is down */
@@ -337,6 +337,7 @@ bool bfd_sess_auto_source(const struct bfd_session_params *bsp);
  * \param json (optional) JSON object pointer.
  * \param bsp session parameters.
  */
+struct json_object;
 void bfd_sess_show(struct vty *vty, struct json_object *json,
 		   struct bfd_session_params *bsp);
 
@@ -463,6 +464,7 @@ extern int bfd_nht_update(const struct prefix *match,
 			  const struct zapi_route *route);
 
 extern bool bfd_session_is_down(const struct bfd_session_params *session);
+extern bool bfd_session_is_admin_down(const struct bfd_session_params *session);
 
 #ifdef __cplusplus
 }

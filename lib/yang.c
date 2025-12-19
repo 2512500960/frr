@@ -95,18 +95,21 @@ static LY_ERR yang_module_imp_clb(const char *mod_name, const char *mod_rev,
 
 /* clang-format off */
 static const char *const frr_native_modules[] = {
-	"frr-interface",
-	"frr-vrf",
-	"frr-routing",
 	"frr-affinity-map",
-	"frr-route-map",
+	"frr-host",
+	"frr-interface",
+	"frr-isisd",
+	"frr-logging",
 	"frr-nexthop",
+	"frr-pathd",
 	"frr-ripd",
 	"frr-ripngd",
-	"frr-isisd",
+	"frr-route-map",
+	"frr-routing",
+	"frr-vrf",
 	"frr-vrrpd",
 	"frr-zebra",
-	"frr-pathd",
+	"ietf-syslog-types",
 };
 /* clang-format on */
 
@@ -251,17 +254,25 @@ int yang_snodes_iterate(const struct lys_module *module, yang_iterate_cb cb,
 			if (ret == YANG_ITER_STOP)
 				return ret;
 		}
-		LY_LIST_FOR (&module_iter->compiled->rpcs->node, snode) {
-			ret = yang_snodes_iterate_subtree(snode, module, cb,
-							  flags, arg);
-			if (ret == YANG_ITER_STOP)
-				return ret;
+		if (module_iter->compiled->rpcs) {
+			LY_LIST_FOR (&module_iter->compiled->rpcs->node, snode) {
+				ret = yang_snodes_iterate_subtree(snode, module,
+								  cb, flags,
+								  arg);
+				if (ret == YANG_ITER_STOP)
+					return ret;
+			}
 		}
-		LY_LIST_FOR (&module_iter->compiled->notifs->node, snode) {
-			ret = yang_snodes_iterate_subtree(snode, module, cb,
-							  flags, arg);
-			if (ret == YANG_ITER_STOP)
-				return ret;
+
+		if (module_iter->compiled->notifs) {
+			LY_LIST_FOR (&module_iter->compiled->notifs->node,
+				     snode) {
+				ret = yang_snodes_iterate_subtree(snode, module,
+								  cb, flags,
+								  arg);
+				if (ret == YANG_ITER_STOP)
+					return ret;
+			}
 		}
 	}
 
@@ -968,8 +979,56 @@ LY_ERR yang_parse_notification(const char *xpath, LYD_FORMAT format,
 	return LY_SUCCESS;
 }
 
-LY_ERR yang_parse_rpc(const char *xpath, LYD_FORMAT format, const char *data,
-		      bool reply, struct lyd_node **rpc)
+LY_ERR yang_parse_restconf_rpc(const char *xpath, LYD_FORMAT format, const char *data, bool reply,
+			       struct lyd_node **rpc)
+{
+	const struct lysc_node *snode;
+	struct lyd_node *dnode = NULL;
+	struct ly_in *in = NULL;
+	LY_ERR err;
+
+	snode = lys_find_path(ly_native_ctx, NULL, xpath, 0);
+	if (!snode) {
+		zlog_err("Failed to find RPC/action schema node: %s", xpath);
+		return LY_ENOTFOUND;
+	}
+	if (snode->nodetype != LYS_RPC && snode->nodetype != LYS_ACTION) {
+		zlog_err("Node '%s' is not an RPC/action", xpath);
+		return LY_ENOTFOUND;
+	}
+	/* Get the tree for the RPC/Action */
+	err = lyd_new_path2(NULL, ly_native_ctx, xpath, NULL, 0, 0, 0, NULL, &dnode);
+	if (err) {
+		zlog_err("Failed to create parent node for action: %s", ly_last_errmsg());
+		goto done;
+	}
+
+	if (!data)
+		goto done;
+
+	err = ly_in_new_memory(data, &in);
+	if (err) {
+		zlog_err("Failed to initialize ly_in: %s", ly_last_errmsg());
+		goto done;
+	}
+
+	err = lyd_parse_op(ly_native_ctx, dnode, in, format,
+			   reply ? LYD_TYPE_REPLY_RESTCONF : LYD_TYPE_RPC_RESTCONF, NULL, NULL);
+	ly_in_free(in, 0);
+	if (err) {
+		zlog_err("Failed to parse RPC/action: %s", ly_last_errmsg());
+		goto done;
+	}
+done:
+	if (err)
+		lyd_free_all(dnode);
+	else
+		*rpc = dnode;
+	return err;
+}
+
+LY_ERR yang_parse_rpc(const char *xpath, LYD_FORMAT format, const char *data, bool reply,
+		      struct lyd_node **rpc)
 {
 	const struct lysc_node *snode;
 	struct lyd_node *parent = NULL;

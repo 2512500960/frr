@@ -39,8 +39,8 @@ DEFPY_YANG_NOSH(
 		 "/frr-route-map:lib/route-map[name='%s']", name);
 	nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, NULL);
 
-	snprintf(xpath_index, sizeof(xpath_index), "%s/entry[sequence='%lu']",
-		 xpath, sequence);
+	snprintfrr(xpath_index, sizeof(xpath_index), "%s/entry[sequence='%" PRIu64 "']", xpath,
+		   sequence);
 	nb_cli_enqueue_change(vty, xpath_index, NB_OP_CREATE, NULL);
 
 	snprintf(xpath_action, sizeof(xpath_action), "%s/action", xpath_index);
@@ -78,9 +78,9 @@ DEFPY_YANG(
 {
 	char xpath[XPATH_MAXLEN];
 
-	snprintf(xpath, sizeof(xpath),
-		 "/frr-route-map:lib/route-map[name='%s']/entry[sequence='%lu']",
-		 name, sequence);
+	snprintfrr(xpath, sizeof(xpath),
+		   "/frr-route-map:lib/route-map[name='%s']/entry[sequence='%" PRIu64 "']", name,
+		   sequence);
 
 	nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
 
@@ -572,7 +572,7 @@ DEFPY_YANG(
 	nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, NULL);
 	snprintf(xpath_value, sizeof(xpath_value),
 		 "%s/rmap-match-condition/tag", xpath);
-	snprintf(value, sizeof(value), "%lu", tagged ? tagged : 0);
+	snprintfrr(value, sizeof(value), "%" PRIu64, tagged ? tagged : 0);
 	nb_cli_enqueue_change(vty, xpath_value, NB_OP_MODIFY, value);
 
 	return nb_cli_apply_changes(vty, NULL);
@@ -690,6 +690,10 @@ void route_map_condition_show(struct vty *vty, const struct lyd_node *dnode,
 			yang_dnode_get_string(
 				dnode,
 				"./rmap-match-condition/frr-zebra-route-map:source-instance"));
+	} else if (IS_MATCH_VPN_DATAPLANE(condition)) {
+		vty_out(vty, " match vpn dataplane %s\n",
+			yang_dnode_get_string(dnode,
+					      "./rmap-match-condition/frr-bgp-route-map:vpn-dataplane"));
 	} else if (IS_MATCH_LOCAL_PREF(condition)) {
 		vty_out(vty, " match local-preference %s\n",
 			yang_dnode_get_string(
@@ -789,11 +793,6 @@ void route_map_condition_show(struct vty *vty, const struct lyd_node *dnode,
 			yang_dnode_get_string(
 				dnode,
 				"./rmap-match-condition/frr-bgp-route-map:evpn-vni"));
-	} else if (IS_MATCH_EVPN_DEFAULT_ROUTE(condition)) {
-		vty_out(vty, " match evpn default-route %s\n",
-			yang_dnode_get_string(
-				dnode,
-				"./rmap-match-condition/frr-bgp-route-map:evpn-default-route"));
 	} else if (IS_MATCH_EVPN_RD(condition)) {
 		vty_out(vty, " match evpn rd %s\n",
 			yang_dnode_get_string(
@@ -869,6 +868,47 @@ void route_map_condition_show(struct vty *vty, const struct lyd_node *dnode,
 			yang_dnode_get_string(
 				dnode,
 				"./rmap-match-condition/frr-bgp-route-map:ipv6-address"));
+	} else if (IS_MATCH_IPV4_MULTICAST_SOURCE(condition)) {
+		vty_out(vty, " match ip multicast-source %s\n",
+			yang_dnode_get_string(
+				dnode,
+				"./rmap-match-condition/frr-pim-route-map:ipv4-multicast-source-address"));
+	} else if (IS_MATCH_IPV6_MULTICAST_SOURCE(condition)) {
+		vty_out(vty, " match ipv6 multicast-source %s\n",
+			yang_dnode_get_string(
+				dnode,
+				"./rmap-match-condition/frr-pim-route-map:ipv6-multicast-source-address"));
+	} else if (IS_MATCH_IPV4_MULTICAST_SOURCE_PREFIX_LIST(condition)) {
+		vty_out(vty, " match ip multicast-source prefix-list %s\n",
+			yang_dnode_get_string(dnode,
+					      "./rmap-match-condition/frr-pim-route-map:list-name"));
+	} else if (IS_MATCH_IPV6_MULTICAST_SOURCE_PREFIX_LIST(condition)) {
+		vty_out(vty, " match ipv6 multicast-source prefix-list %s\n",
+			yang_dnode_get_string(dnode,
+					      "./rmap-match-condition/frr-pim-route-map:list-name"));
+	} else if (IS_MATCH_IPV4_MULTICAST_GROUP(condition)) {
+		vty_out(vty, " match ip multicast-group %s\n",
+			yang_dnode_get_string(
+				dnode,
+				"./rmap-match-condition/frr-pim-route-map:ipv4-multicast-group-address"));
+	} else if (IS_MATCH_IPV6_MULTICAST_GROUP(condition)) {
+		vty_out(vty, " match ipv6 multicast-group %s\n",
+			yang_dnode_get_string(
+				dnode,
+				"./rmap-match-condition/frr-pim-route-map:ipv6-multicast-group-address"));
+	} else if (IS_MATCH_IPV4_MULTICAST_GROUP_PREFIX_LIST(condition)) {
+		vty_out(vty, " match ip multicast-group prefix-list %s\n",
+			yang_dnode_get_string(dnode,
+					      "./rmap-match-condition/frr-pim-route-map:list-name"));
+	} else if (IS_MATCH_IPV6_MULTICAST_GROUP_PREFIX_LIST(condition)) {
+		vty_out(vty, " match ipv6 multicast-group prefix-list %s\n",
+			yang_dnode_get_string(dnode,
+					      "./rmap-match-condition/frr-pim-route-map:list-name"));
+	} else if (IS_MATCH_MULTICAST_INTERFACE(condition)) {
+		vty_out(vty, " match ipv6 multicast-interface %s\n",
+			yang_dnode_get_string(
+				dnode,
+				"./rmap-match-condition/frr-pim-route-map:multicast-interface"));
 	}
 }
 
@@ -1100,7 +1140,7 @@ DEFPY_YANG(
 	nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, NULL);
 	snprintf(xpath_value, sizeof(xpath_value), "%s/rmap-set-action/tag",
 		 xpath);
-	snprintf(value, sizeof(value), "%lu", tagged ? tagged : 0);
+	snprintfrr(value, sizeof(value), "%" PRIu64, tagged ? tagged : 0);
 	nb_cli_enqueue_change(vty, xpath_value, NB_OP_MODIFY, value);
 
 	return nb_cli_apply_changes(vty, NULL);
@@ -1529,10 +1569,11 @@ DEFPY_YANG(
 
 DEFPY_YANG(
 	no_rmap_onmatch_goto, no_rmap_onmatch_goto_cmd,
-	"no on-match goto",
+	"no on-match goto [(1-65535)$rm_num]",
 	NO_STR
 	"Exit policy on matches\n"
-	"Goto Clause number\n")
+	"Goto Clause number\n"
+	"Number\n")
 {
 	nb_cli_enqueue_change(vty, "./exit-policy", NB_OP_DESTROY, NULL);
 

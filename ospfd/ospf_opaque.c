@@ -142,7 +142,7 @@ int ospf_opaque_type9_lsa_init(struct ospf_interface *oi)
 
 void ospf_opaque_type9_lsa_term(struct ospf_interface *oi)
 {
-	EVENT_OFF(oi->t_opaque_lsa_self);
+	event_cancel(&oi->t_opaque_lsa_self);
 	if (oi->opaque_lsa_self != NULL)
 		list_delete(&oi->opaque_lsa_self);
 	oi->opaque_lsa_self = NULL;
@@ -171,7 +171,7 @@ void ospf_opaque_type10_lsa_term(struct ospf_area *area)
 	hook_unregister(ospf_lsa_delete, ospf_opaque_lsa_delete_hook);
 	ospf_opaque_lsa_hooks_registered = false;
 
-	EVENT_OFF(area->t_opaque_lsa_self);
+	event_cancel(&area->t_opaque_lsa_self);
 	if (area->opaque_lsa_self != NULL)
 		list_delete(&area->opaque_lsa_self);
 	return;
@@ -191,7 +191,7 @@ int ospf_opaque_type11_lsa_init(struct ospf *top)
 
 void ospf_opaque_type11_lsa_term(struct ospf *top)
 {
-	EVENT_OFF(top->t_opaque_lsa_self);
+	event_cancel(&top->t_opaque_lsa_self);
 	if (top->opaque_lsa_self != NULL)
 		list_delete(&top->opaque_lsa_self);
 	return;
@@ -631,7 +631,7 @@ static void free_opaque_info_per_type(struct opaque_info_per_type *oipt,
 		ospf_opaque_lsa_flush_schedule(lsa);
 	}
 
-	EVENT_OFF(oipt->t_opaque_lsa_self);
+	event_cancel(&oipt->t_opaque_lsa_self);
 	list_delete(&oipt->id_list);
 	if (cleanup_owner) {
 		/* Remove from its owner's self-originated LSA list. */
@@ -747,7 +747,7 @@ static void free_opaque_info_per_id(void *val)
 {
 	struct opaque_info_per_id *oipi = (struct opaque_info_per_id *)val;
 
-	EVENT_OFF(oipi->t_opaque_lsa_self);
+	event_cancel(&oipi->t_opaque_lsa_self);
 	if (oipi->lsa != NULL)
 		ospf_lsa_unlock(&oipi->lsa);
 	XFREE(MTYPE_OPAQUE_INFO_PER_ID, oipi);
@@ -829,7 +829,7 @@ void ospf_opaque_type9_lsa_if_cleanup(struct ospf_interface *oi)
 					   GET_OPAQUE_ID(ntohl(
 						   lsa->data->id.s_addr)));
 			ospf_lsdb_delete(lsdb, lsa);
-			lsa->data->ls_age = htons(OSPF_LSA_MAXAGE);
+			LS_AGE_SET(lsa, OSPF_LSA_MAXAGE);
 
 			/*
 			 * Invoke the delete hook directly since it bypasses the normal MAXAGE
@@ -1735,7 +1735,7 @@ struct ospf_lsa *ospf_opaque_lsa_refresh(struct ospf_lsa *lsa)
 			zlog_debug("LSA[Type%d:%pI4]: Flush stray Opaque-LSA",
 				   lsa->data->type, &lsa->data->id);
 
-		lsa->data->ls_age = htons(OSPF_LSA_MAXAGE);
+		LS_AGE_SET(lsa, OSPF_LSA_MAXAGE);
 		ospf_lsa_flush(ospf, lsa);
 	} else
 		new = (*functab->lsa_refresher)(lsa);
@@ -2224,7 +2224,7 @@ void ospf_opaque_self_originated_lsa_received(struct ospf_neighbor *nbr,
 	 * registered when opaque LSAs are originated (which is not the case
 	 * for stale LSAs).
 	 */
-	lsa->data->ls_age = htons(OSPF_LSA_MAXAGE);
+	LS_AGE_SET(lsa, OSPF_LSA_MAXAGE);
 	ospf_lsa_install(
 		top, (lsa->data->type == OSPF_OPAQUE_LINK_LSA) ? nbr->oi : NULL,
 		lsa);
