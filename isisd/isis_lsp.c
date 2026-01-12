@@ -1431,14 +1431,6 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 					 false, false, false);
 	}
 
-	struct isis_adjacency *adj;
-	bool adj_flag = false;
-
-	for (ALL_LIST_ELEMENTS_RO(area->adjacency_list, node, adj)) {
-		if (adj->level == IS_LEVEL_2)
-			adj_flag = true;
-	}
-
 	struct isis_circuit *circuit;
 	frr_each (isis_circuit_list, &area->circuit_list, circuit) {
 		if (!circuit->interface)
@@ -1571,7 +1563,7 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 		if (redist->level_to == LVL_ISIS_LEAKING_2) propogation_flag = false;
 	}
 
-	if (adj_flag && lsp->level == IS_LEVEL_2 &&
+	if (isis_level2_adj_up(area) && lsp->level == IS_LEVEL_2 &&
 	    area->is_type == IS_LEVEL_1_AND_2 && lsp->hdr.lsp_bits != LSPBIT_ATT && propogation_flag)
 		iteration_in_level1_lspdb(area, lsp);
 
