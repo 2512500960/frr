@@ -321,54 +321,59 @@ static struct levels_redist_match* levels_redist_list_init(void)
 
 /*Match ip reachability in level's IS-IS redistribution*/
 static void isis_leaking_apply_match_ip(struct isis_area *area,
-				  struct isis_levels_redist *redist,
-				  struct isis_extended_ip_reach *ip_reach_s)
+                  struct isis_levels_redist *redist,
+                  struct isis_extended_ip_reach *ip_reach_s)
 {
-	route_map_result_t map_ret;
-	struct isis_ext_info area_info;
-	bool prefix_match;
+    route_map_result_t map_ret;
+    struct isis_ext_info area_info;
+    bool prefix_ok;
 
-	area_info.metric = redist->metric;
+    area_info.metric = redist->metric;
 
-	map_ret = route_map_apply(redist->map,
-				  (struct prefix *)&(ip_reach_s->prefix),
-				  &area_info);
-	prefix_match = check_prefix(redist);
+    map_ret = route_map_apply(redist->map,
+                  (struct prefix *)&(ip_reach_s->prefix),
+                  &area_info);
+    prefix_ok = check_prefix(redist);
 
-	if (map_ret == RMAP_PERMITMATCH && prefix_match) {
-		struct levels_redist_match *prefix_match = levels_redist_list_init();
-		struct isis_extended_ip_reach *ip_reach_d = copy_extended_ip_reach((struct isis_item *)
-								ip_reach_s, area_info.metric,
-								redist->up_down_flag);
-                listnode_add(prefix_match->extended_ip_reach, ip_reach_d);
-		listnode_add(area->levels_redist_list[redist->level_to], prefix_match);
-	}
+    if (map_ret == RMAP_PERMITMATCH && prefix_ok) {
+        struct levels_redist_match *match_entry = levels_redist_list_init();
+        struct isis_extended_ip_reach *ip_reach_d =
+            copy_extended_ip_reach((struct isis_item *)ip_reach_s,
+                           area_info.metric,
+                           redist->up_down_flag);
+
+        listnode_add(match_entry->extended_ip_reach, ip_reach_d);
+        listnode_add(area->levels_redist_list[redist->level_to],
+                 match_entry);
+    }
 }
 
 /*Match ipv6 reachability in level's IS-IS redistribution*/
 static void isis_levels_redist_match_ipv6(struct isis_area *area,
-				    struct isis_levels_redist *redist,
-				    struct isis_ipv6_reach *ipv6_reach_s)
+                    struct isis_levels_redist *redist,
+                    struct isis_ipv6_reach *ipv6_reach_s)
 {
-	route_map_result_t map_ret;
-	struct isis_ext_info area_info;
-	bool prefix_match;
+    route_map_result_t map_ret;
+    struct isis_ext_info area_info;
+    bool prefix_ok;
 
-	area_info.metric = redist->metric;
+    area_info.metric = redist->metric;
 
-	map_ret = route_map_apply(redist->map,
-				  (struct prefix *)(&ipv6_reach_s->prefix),
-				  &area_info);
-	prefix_match = check_prefix(redist);
+    map_ret = route_map_apply(redist->map,
+                  (struct prefix *)(&ipv6_reach_s->prefix),
+                  &area_info);
+    prefix_ok = check_prefix(redist);
 
-	if (map_ret == RMAP_PERMITMATCH && prefix_match) {
-		struct levels_redist_match *prefix_match = levels_redist_list_init();
-		struct isis_ipv6_reach *ipv6_reach_d = copy_ipv6_reach((struct isis_item *)
-							ipv6_reach_s, area_info.metric,
-							redist->up_down_flag);
-		listnode_add(prefix_match->ipv6_reach, ipv6_reach_d);
-		listnode_add(area->levels_redist_list[redist->level_to], prefix_match);
-	}
+    if (map_ret == RMAP_PERMITMATCH && prefix_ok) {
+        struct levels_redist_match *match_entry = levels_redist_list_init();
+        struct isis_ipv6_reach *ipv6_reach_d = copy_ipv6_reach(
+            (struct isis_item *)ipv6_reach_s, area_info.metric,
+            redist->up_down_flag);
+
+        listnode_add(match_entry->ipv6_reach, ipv6_reach_d);
+        listnode_add(area->levels_redist_list[redist->level_to],
+                 match_entry);
+    }
 }
 
 static void isis_levels_redist_match_ip(struct isis_area *area,
