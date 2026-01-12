@@ -42,6 +42,7 @@
 #include "zebra/zebra_vxlan.h"
 #include "zebra/zebra_evpn_mh.h"
 #include "zebra/rt.h"
+#include "zebra/zebra_trace.h"
 #include "zebra/zebra_pbr.h"
 #include "zebra/zebra_tc.h"
 #include "zebra/table_manager.h"
@@ -52,6 +53,7 @@
 #include "zebra/zebra_opaque.h"
 #include "zebra/zebra_srte.h"
 #include "zebra/zebra_srv6.h"
+#include "zebra/zebra_neigh.h"
 
 DEFINE_MTYPE_STATIC(ZEBRA, RE_OPAQUE, "Route Opaque Data");
 
@@ -1301,29 +1303,36 @@ static void zread_rnh_register(ZAPI_HANDLER_ARGS)
 				p.family);
 			return;
 		}
-		rnh = zebra_add_rnh(&p, zvrf_id(zvrf), safi, &exist);
+		rnh = zebra_add_rnh(&p, zvrf_id(zvrf), safi, client, &exist);
 		if (!rnh)
 			return;
 
 		orig_flags = rnh->flags;
-		if (connected && !CHECK_FLAG(rnh->flags, ZEBRA_NHT_CONNECTED))
+
+		/* Set flags specific to this client's registration */
+		if (connected)
 			SET_FLAG(rnh->flags, ZEBRA_NHT_CONNECTED);
-		else if (!connected
-			 && CHECK_FLAG(rnh->flags, ZEBRA_NHT_CONNECTED))
+		else
 			UNSET_FLAG(rnh->flags, ZEBRA_NHT_CONNECTED);
 
 		if (resolve_via_default)
 			SET_FLAG(rnh->flags, ZEBRA_NHT_RESOLVE_VIA_DEFAULT);
+		else
+			UNSET_FLAG(rnh->flags, ZEBRA_NHT_RESOLVE_VIA_DEFAULT);
 
 		if (orig_flags != rnh->flags)
 			flag_changed = true;
 
-		/* Anything not AF_INET/INET6 has been filtered out above */
+		/* zebra_add_rnh_client will send the update, so only evaluate
+		 * if we're not adding/notifying the client
+		 */
 		if (!exist || flag_changed)
 			zebra_evaluate_rnh(zvrf, family2afi(p.family), 1, &p,
 					   safi);
-
-		zebra_add_rnh_client(rnh, client, zvrf_id(zvrf));
+		else {
+			/* This will send an RNH update to the client */
+			zebra_add_rnh_client(rnh, client, zvrf_id(zvrf));
+		}
 	}
 
 stream_failure:
@@ -1388,7 +1397,7 @@ static void zread_rnh_unregister(ZAPI_HANDLER_ARGS)
 				p.family);
 			return;
 		}
-		rnh = zebra_lookup_rnh(&p, zvrf_id(zvrf), safi);
+		rnh = zebra_lookup_rnh(&p, zvrf_id(zvrf), safi, client);
 		if (rnh) {
 			client->nh_dereg_time = monotime(NULL);
 			zebra_remove_rnh_client(rnh, client);
@@ -2046,6 +2055,8 @@ static void zread_nhg_del(ZAPI_HANDLER_ARGS)
 	nhe->zapi_instance = client->instance;
 	nhe->zapi_session = client->session_id;
 
+	frrtrace(2, frr_zebra, zread_nhg_del, api_nhg.id, api_nhg.proto);
+
 	/* Sanity check - Empty nexthop and group */
 	nhe->nhg.nexthop = NULL;
 
@@ -2319,6 +2330,11 @@ static void zread_route_del(ZAPI_HANDLER_ARGS)
 		zlog_debug("%s: p=(%u:%u)%pFX, msg flags=0x%x, flags=0x%x",
 			   __func__, zvrf_id(zvrf), table_id, &api.prefix,
 			   (int)api.message, api.flags);
+
+	char lttng_buf_prefix[PREFIX_STRLEN] = { 0 };
+
+	prefix2str(&api.prefix, lttng_buf_prefix, sizeof(lttng_buf_prefix));
+	frrtrace(3, frr_zebra, zread_route_del, api, lttng_buf_prefix, table_id);
 
 	rib_delete(afi, api.safi, zvrf_id(zvrf), api.type, api.instance,
 		   api.flags, &api.prefix, src_p, NULL, 0, table_id, api.metric,
@@ -3198,7 +3214,8 @@ static void zread_srv6_manager_request(ZAPI_HANDLER_ARGS)
 		zread_srv6_manager_get_locator(client, msg);
 		break;
 	default:
-		zlog_err("%s: unknown SRv6 Manager command", __func__);
+		flog_err(EC_ZEBRA_SRV6_MANAGER_UNKNOWN_COMMAND, "%s: unknown SRv6 Manager command",
+			 __func__);
 		break;
 	}
 }
@@ -3770,6 +3787,66 @@ stream_failure:
 	return;
 }
 
+/* Send neighbor info to client */
+static void zsend_neighbor(struct zserv *client, struct interface *ifp,
+			   struct zebra_neigh_ent *neigh)
+{
+	struct stream *s;
+	union sockunion ip, lladdr;
+
+	/* Convert ipaddr to sockunion */
+	sockunion_family(&ip) = neigh->ip.ipa_type;
+	if (neigh->ip.ipa_type == AF_INET)
+		memcpy(&ip.sin.sin_addr, &neigh->ip.ipaddr_v4, sizeof(struct in_addr));
+	else
+		memcpy(&ip.sin6.sin6_addr, &neigh->ip.ipaddr_v6, sizeof(struct in6_addr));
+
+	/* Convert lladdr to sockunion */
+	sockunion_family(&lladdr) = AF_UNSPEC;
+
+	s = stream_new(ZEBRA_MAX_PACKET_SIZ);
+	zclient_neigh_ip_encode(s, ZEBRA_NEIGH_ADDED, &ip, &lladdr, ifp,
+				ZEBRA_NEIGH_STATE_REACHABLE, 0);
+	stream_putw_at(s, 0, stream_get_endp(s));
+	zserv_send_message(client, s);
+}
+
+static void zebra_neigh_get(ZAPI_HANDLER_ARGS)
+{
+	ifindex_t ifindex;
+	struct interface *ifp;
+	struct zebra_neigh_ent *n;
+	afi_t afi;
+
+	STREAM_GETL(msg, ifindex);
+	STREAM_GETW(msg, afi);
+
+	if (!(IS_VALID_AFI(afi))) {
+		zlog_warn("Failed to get neighbors: invalid AFI %u", afi);
+		return;
+	}
+
+	ifp = if_lookup_by_index(ifindex, zvrf_id(zvrf));
+	if (!ifp) {
+		zlog_warn("Failed to get neighbors: interface with index %u not found", ifindex);
+		return;
+	}
+
+	/* Send all neighbors for this interface */
+	RB_FOREACH (n, zebra_neigh_rb_head, &zneigh_info->neigh_rb_tree) {
+		if (n->ifindex != ifindex)
+			continue;
+
+		if ((afi == AFI_IP && n->ip.ipa_type != AF_INET) ||
+		    (afi == AFI_IP6 && n->ip.ipa_type != AF_INET6))
+			continue;
+
+		zsend_neighbor(client, ifp, n);
+	}
+
+stream_failure:
+	return;
+}
 
 static inline void zebra_neigh_register(ZAPI_HANDLER_ARGS)
 {
@@ -4162,6 +4239,7 @@ void (*const zserv_handlers[])(ZAPI_HANDLER_ARGS) = {
 	[ZEBRA_NEIGH_IP_DEL] = zebra_neigh_ip_del,
 	[ZEBRA_NEIGH_REGISTER] = zebra_neigh_register,
 	[ZEBRA_NEIGH_UNREGISTER] = zebra_neigh_unregister,
+	[ZEBRA_NEIGH_GET] = zebra_neigh_get,
 	[ZEBRA_CONFIGURE_ARP] = zebra_configure_arp,
 	[ZEBRA_GRE_GET] = zebra_gre_get,
 	[ZEBRA_GRE_SOURCE_SET] = zebra_gre_source_set,

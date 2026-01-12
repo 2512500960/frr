@@ -109,7 +109,7 @@ struct sr_adjacency {
 	} u;
 
 	/* Back pointer to IS-IS adjacency. */
-	struct isis_adjacency *adj;
+	const struct isis_adjacency *adj;
 };
 
 /* SID type. NOTE: these values must be in sync with the YANG module. */
@@ -217,9 +217,9 @@ extern void isis_redist_cfg2subtlvs(struct isis_prefix_sid *psid);
 extern void isis_sr_prefix_cfg2subtlv(const struct sr_prefix_cfg *pcfg,
 				      bool external,
 				      struct isis_prefix_sid *psid);
-extern void sr_adj_sid_add_single(struct isis_adjacency *adj, int family,
+extern void sr_adj_sid_add_single(const struct isis_adjacency *adj, int family,
 				  bool backup, struct list *nexthops);
-extern struct sr_adjacency *isis_sr_adj_sid_find(struct isis_adjacency *adj,
+extern struct sr_adjacency *isis_sr_adj_sid_find(const struct isis_adjacency *adj,
 						 int family,
 						 enum sr_adj_type type);
 extern void isis_area_delete_backup_adj_sids(struct isis_area *area, int level);
