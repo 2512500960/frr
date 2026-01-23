@@ -3584,6 +3584,14 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_dest *dest,
 			old_select ? old_select->peer->host : "NONE");
 	}
 
+	if (new_select) {
+		if (debug)
+			zlog_debug("%pBD(%s): %s is the bestpath, add to the multipath list", dest,
+				   bgp->name_pretty, path_buf);
+		SET_FLAG(new_select->flags, BGP_PATH_MULTIPATH_NEW);
+		num_candidates++;
+	}
+
 	if (do_mpath && new_select) {
 		bool first_reason = true;
 		enum bgp_path_selection_reason ignore;
@@ -3593,16 +3601,8 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_dest *dest,
 				bgp_path_info_path_with_addpath_rx_str(
 					pi, path_buf, sizeof(path_buf));
 
-			if (pi == new_select) {
-				if (debug)
-					zlog_debug(
-						"%pBD(%s): %s is the bestpath, add to the multipath list",
-						dest, bgp->name_pretty,
-						path_buf);
-				SET_FLAG(pi->flags, BGP_PATH_MULTIPATH_NEW);
-				num_candidates++;
+			if (pi == new_select)
 				continue;
-			}
 
 			if (BGP_PATH_HOLDDOWN(pi))
 				continue;
@@ -3707,28 +3707,26 @@ void subgroup_process_announce_selected(struct update_subgroup *subgrp,
 							if (!adj->adv &&
 							    adj->addpath_tx_id != addpath_tx_id) {
 								bgp_adj_out_unset_subgroup(dest,
-											   subgrp, 1,
+											   subgrp,
 											   adj->addpath_tx_id);
 							}
 						}
 					}
 				} else {
-					bgp_adj_out_unset_subgroup(
-						dest, subgrp, 1, addpath_tx_id);
+					bgp_adj_out_unset_subgroup(dest, subgrp, addpath_tx_id);
 					bgp_attr_flush(pattr);
 				}
 			} else
 				bgp_attr_flush(pattr);
 		} else {
-			bgp_adj_out_unset_subgroup(dest, subgrp, 1,
-						   addpath_tx_id);
+			bgp_adj_out_unset_subgroup(dest, subgrp, addpath_tx_id);
 			bgp_attr_flush(pattr);
 		}
 	}
 
 	/* If selected is NULL we must withdraw the path using addpath_tx_id */
 	else {
-		bgp_adj_out_unset_subgroup(dest, subgrp, 1, addpath_tx_id);
+		bgp_adj_out_unset_subgroup(dest, subgrp, addpath_tx_id);
 	}
 }
 
@@ -6633,11 +6631,14 @@ void bgp_announce_route(struct peer *peer, afi_t afi, safi_t safi, bool force)
 	 * Ignore if subgroup doesn't exist (implies AF is not negotiated)
 	 * or a refresh has already been triggered.
 	 */
-	if (!subgrp || paf->t_announce_route)
+	if (!subgrp)
 		return;
 
 	if (force)
 		SET_FLAG(subgrp->sflags, SUBGRP_STATUS_FORCE_UPDATES);
+
+	if (paf->t_announce_route)
+		return;
 
 	/*
 	 * Start a timer to stagger/delay the announce. This serves
@@ -7295,21 +7296,14 @@ static struct bgp_dest *clearing_dest_helper(struct bgp_table *table,
 						   inner_p ? " inner" : "", buf);
 				}
 
-				dest = bgp_node_match(table, pfx);
+				dest = bgp_node_get(table, pfx);
 			} else {
 				/* Normal prefix: look for next prefix */
 				if (BGP_DEBUG(neighbor_events, NEIGHBOR_EVENTS_DETAIL))
 					zlog_debug("%s: using RESUME%s prefix %pFX", __func__,
 						   inner_p ? " inner" : "", pfx);
 
-				dest = bgp_node_match(table, pfx);
-				if (dest) {
-					/* if 'dest' matches or precedes the 'last' prefix
-					 * visited, then advance.
-					 */
-					while (dest && (prefix_cmp(&(dest->rn->p), pfx) <= 0))
-						dest = bgp_route_next(dest);
-				}
+				dest = bgp_node_get(table, pfx);
 			}
 		}
 	}
@@ -16665,8 +16659,13 @@ static int peer_adj_routes(struct vty *vty, struct peer *peer, afi_t afi,
 				vty_json(vty, json);
 			}
 			json_object_free(json_ar);
-		} else
-			vty_out(vty, "%% No such neighbor or address family\n");
+		} else {
+			if (!peer)
+				vty_out(vty, "%% No such neighbor\n");
+			else
+				vty_out(vty, "%% %s is not enabled for this neighbor\n",
+					get_afi_safi_str(afi, safi, false));
+		}
 
 		return CMD_WARNING;
 	}

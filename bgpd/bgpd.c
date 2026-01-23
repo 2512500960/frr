@@ -1271,7 +1271,7 @@ struct peer_connection *bgp_peer_connection_new(struct peer *peer, const union s
 	 * UPDATE.
 	 */
 	connection->ibuf_work =
-		ringbuf_new(BGP_MAX_PACKET_SIZE * BGP_READ_PACKET_MAX);
+		ringbuf_new(BGP_MAX_PACKET_SIZE + BGP_MAX_PACKET_SIZE / 2);
 
 	connection->status = Idle;
 	connection->ostatus = Idle;
@@ -4483,9 +4483,13 @@ int bgp_delete(struct bgp *bgp)
 	}
 
 	/* Clean BGP address family parameters */
-	bgp_mh_info->ead_evi_rx = BGP_EVPN_MH_EAD_EVI_RX_DEF;
+	bgp_mh_info->enable_ead_evi_rx = BGP_EVPN_MH_EAD_EVI_RX_DEF;
 	bgp_evpn_switch_ead_evi_rx();
-	bgp_mh_info->ead_evi_tx = BGP_EVPN_MH_EAD_EVI_TX_DEF;
+	bgp_mh_info->enable_ead_evi_tx = BGP_EVPN_MH_EAD_EVI_TX_DEF;
+	/*
+	 * Don't call bgp_evpn_switch_ead_evi_tx() here - routes are cleaned
+	 * up during BGP instance teardown
+	 */
 	bgp_mh_info->evi_per_es_frag = BGP_EVPN_MAX_EVI_PER_ES_FRAG;
 
 	bgp_address_family_distance_delete();
@@ -9445,8 +9449,9 @@ static void bgp_clearing_batch_end(struct bgp *bgp)
 		return;
 
 	cinfo = bgp_clearing_info_first(&bgp->clearing_list);
+	if (!cinfo)
+		return; /* Nothing to do */
 
-	assert(cinfo != NULL);
 	assert(CHECK_FLAG(cinfo->flags, BGP_CLEARING_INFO_FLAG_OPEN));
 
 	/* Batch is closed */
