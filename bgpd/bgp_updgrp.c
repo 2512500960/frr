@@ -607,6 +607,10 @@ static bool updgrp_hash_cmp(const void *p1, const void *p2)
 	    != (pe2->cap & PEER_UPDGRP_CAP_FLAGS))
 		return false;
 
+	/* For aspath loop detection, the remote-as should match */
+	if (CHECK_FLAG(pe1->flags, PEER_FLAG_AS_LOOP_DETECTION) && (pe1->as != pe2->as))
+		return false;
+
 	if ((pe1->af_cap[afi][safi] & PEER_UPDGRP_AF_CAP_FLAGS)
 	    != (pe2->af_cap[afi][safi] & PEER_UPDGRP_AF_CAP_FLAGS))
 		return false;
@@ -739,6 +743,7 @@ static int update_group_show_walkcb(struct update_group *updgrp, void *arg)
 	json_object *json_pkt_info = NULL;
 	time_t epoch_tbuf, tbuf;
 	char timebuf[32];
+	char time_buf[64];
 
 	if (!ctx)
 		return CMD_SUCCESS;
@@ -781,6 +786,11 @@ static int update_group_show_walkcb(struct update_group *updgrp, void *arg)
 				       afi2str(updgrp->afi));
 		json_object_string_add(json_updgrp, "safi",
 				       safi2str(updgrp->safi));
+		/* Calculate createtime and convert it into dd:hh:mm:ss display
+		 * format
+		 */
+		time_to_date_string(updgrp->uptime, time_buf, sizeof(time_buf));
+		json_object_string_add(json_updgrp, "grpCreateTimeStr", time_buf);
 	} else {
 		vty_out(vty, "Update-group %" PRIu64 ":\n", updgrp->id);
 		vty_out(vty, "  Created: %s", time_to_string(updgrp->uptime, timebuf));
@@ -854,6 +864,11 @@ static int update_group_show_walkcb(struct update_group *updgrp, void *arg)
 					       time_to_string_json(subgrp->uptime, timebuf));
 			json_object_object_add(json_subgrp, "groupCreateTime",
 					       json_subgrp_time);
+			/* Calculate subgrp createtime and convert it into
+			 * dd:hh:mm:ss display format
+			 */
+			time_to_date_string(subgrp->uptime, time_buf, sizeof(time_buf));
+			json_object_string_add(json_subgrp, "subGrpCreateTimeStr", time_buf);
 		} else {
 			vty_out(vty, "\n");
 			vty_out(vty, "  Update-subgroup %" PRIu64 ":\n",
@@ -1738,7 +1753,7 @@ static int updgrp_policy_update_walkcb(struct update_group *updgrp, void *arg)
 	}
 
 	UPDGRP_FOREACH_SUBGRP (updgrp, subgrp) {
-		/* Avoid supressing duplicate routes later
+		/* Avoid suppressing duplicate routes later
 		 * when processing in subgroup_announce_table().
 		 */
 		SET_FLAG(subgrp->sflags, SUBGRP_STATUS_FORCE_UPDATES);
@@ -2213,7 +2228,7 @@ void update_group_refresh_default_originate_route_map(struct event *event)
  *
  * If the combine parameter is true, then this function will try to
  * gather other peers in the subgroup for which a route announcement
- * is pending and efficently announce routes to all of them.
+ * is pending and efficiently announce routes to all of them.
  *
  * For now, the 'combine' option has an effect only if all peers in
  * the subgroup have a route announcement pending.
@@ -2252,7 +2267,7 @@ void peer_af_announce_route(struct peer_af *paf, int combine)
 	}
 	/*
 	 * Announce to the peer alone if we were not asked to combine peers,
-	 * or if some peers don't have a route annoucement pending.
+	 * or if some peers don't have a route announcement pending.
 	 */
 	if (!combine || !all_pending) {
 		update_subgroup_split_peer(paf, NULL);

@@ -125,38 +125,47 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 		/* warning only */
 	}
 
+	/* detect change in RPF_interface(S) */
+	if (saved.source_nexthop.interface != rpf->source_nexthop.interface) {
+		struct pim_neighbor *nbr;
+
+		if (PIM_DEBUG_ZEBRA) {
+			zlog_debug("%s(%s): (S,G)=%s RPF_interface(S) changed from %s to %s",
+				   __func__, caller, up->sg_str,
+				   saved.source_nexthop.interface ? saved.source_nexthop.interface->name
+								  : "<oldif?>",
+				   rpf->source_nexthop.interface ? rpf->source_nexthop.interface->name
+								 : "<newif?>");
+		}
+
+		nbr = pim_neighbor_find(saved.source_nexthop.interface, saved.rpf_addr, true);
+		if (nbr) {
+			pim_jp_agg_remove_group(nbr->upstream_jp_agg, up, nbr);
+			pim_jp_agg_upstream_verification(up, false);
+		}
+
+		pim_upstream_rpf_interface_changed(
+			up, saved.source_nexthop.interface);
+	}
+
 	/* detect change in pim_nexthop */
 	if (nexthop_mismatch(&rpf->source_nexthop, &saved.source_nexthop)) {
 
 		if (PIM_DEBUG_ZEBRA)
 			zlog_debug("%s(%s): (S,G)=%s source nexthop now is: interface=%s address=%pPAs pref=%d metric=%d",
-		 __func__, caller,
-		 up->sg_str,
-		 rpf->source_nexthop.interface ? rpf->source_nexthop.interface->name : "<ifname?>",
-		 &rpf->source_nexthop.mrib_nexthop_addr,
-		 rpf->source_nexthop.mrib_metric_preference,
-		 rpf->source_nexthop.mrib_route_metric);
+				   __func__, caller, up->sg_str,
+				   rpf->source_nexthop.interface ? rpf->source_nexthop.interface->name
+								 : "<ifname?>",
+				   &rpf->source_nexthop.mrib_nexthop_addr,
+				   rpf->source_nexthop.mrib_metric_preference,
+				   rpf->source_nexthop.mrib_route_metric);
 
 		pim_upstream_update_join_desired(pim, up);
 		pim_upstream_update_could_assert(up);
 		pim_upstream_update_my_assert_metric(up);
 	}
 
-	/* detect change in RPF_interface(S) */
-	if (saved.source_nexthop.interface != rpf->source_nexthop.interface) {
 
-		if (PIM_DEBUG_ZEBRA) {
-			zlog_debug("%s(%s): (S,G)=%s RPF_interface(S) changed from %s to %s",
-		 __func__, caller,
-		 up->sg_str,
-		 saved.source_nexthop.interface ? saved.source_nexthop.interface->name : "<oldif?>",
-		 rpf->source_nexthop.interface ? rpf->source_nexthop.interface->name : "<newif?>");
-			/* warning only */
-		}
-
-		pim_upstream_rpf_interface_changed(
-			up, saved.source_nexthop.interface);
-	}
 
 	/* detect change in RPF'(S,G) */
 	if (pim_addr_cmp(saved.rpf_addr, rpf->rpf_addr) ||
@@ -215,7 +224,7 @@ void pim_upstream_rpf_clear(struct pim_instance *pim,
 */
 static pim_addr pim_rpf_find_rpf_addr(struct pim_upstream *up)
 {
-	struct pim_ifchannel *rpf_ch;
+	struct pim_ifchannel *rpf_ch, *throwaway;
 	struct pim_neighbor *neigh;
 	pim_addr rpf_addr;
 
@@ -226,7 +235,7 @@ static pim_addr pim_rpf_find_rpf_addr(struct pim_upstream *up)
 		return PIMADDR_ANY;
 	}
 
-	rpf_ch = pim_ifchannel_find(up->rpf.source_nexthop.interface, &up->sg);
+	pim_ifchannel_find(up->rpf.source_nexthop.interface, &up->sg, &rpf_ch, &throwaway);
 	if (rpf_ch) {
 		if (rpf_ch->ifassert_state == PIM_IFASSERT_I_AM_LOSER) {
 			return rpf_ch->ifassert_winner;

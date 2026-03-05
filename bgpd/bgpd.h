@@ -711,6 +711,7 @@ struct bgp {
 #define BGP_FLAG_SHUTDOWN (1ULL << 25)
 #define BGP_FLAG_SUPPRESS_FIB_PENDING (1ULL << 26)
 #define BGP_FLAG_SUPPRESS_DUPLICATES (1ULL << 27)
+#define BGP_FLAG_SUPPRESS_FIB_PENDING_OP_DEFERRED (1ULL << 28)
 #define BGP_FLAG_PEERTYPE_MULTIPATH_RELAX (1ULL << 29)
 /* Indicate Graceful Restart support for BGP NOTIFICATION messages */
 #define BGP_FLAG_GRACEFUL_NOTIFICATION (1ULL << 30)
@@ -733,6 +734,11 @@ struct bgp {
 #define BGP_FLAG_VRF_MAY_LISTEN		    (1ULL << 44)
 #define BGP_FLAG_SOFT_VERSION_CAPABILITY_NEW (1ULL << 45)
 #define BGP_FLAG_USE_RECURSIVE_WEIGHT (1ULL << 46)
+
+/* Use current (imported) path's attributes instead of source path's attributes
+ * for bestpath comparison of imported paths.
+ */
+#define BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS (1ULL << 45)
 
 	/* BGP default address-families.
 	 * New peers inherit enabled afi/safis from bgp instance.
@@ -835,7 +841,7 @@ struct bgp {
 	 * stand for the list of ipset sets, and table_ids in the kernel
 	 * - the arrow above between pbr_match and pbr_action indicate
 	 * that a backpointer permits match to find the action
-	 * - the arrow betwen match_entry and match is a hash list
+	 * - the arrow between match_entry and match is a hash list
 	 * contained in match, that lists the whole set of entries
 	 */
 	struct hash *pbr_match_hash;
@@ -1486,6 +1492,18 @@ struct peer_connection {
 	struct peer_connection_fifo_item fifo_item;
 
 	struct stream *curr;
+
+	/*
+	 * Timestamp of the last outgoing messge to the peer.
+	 * This timestamp is written on multiple threads and read
+	 * on the master pthread.  As such it must be atomic.
+	 */
+	atomic_time_t last_sendq_ok;
+	/*
+	 * only updated under io_mtx.
+	 * last_sendq_warn is only for ratelimiting log warning messages.
+	 */
+	time_t last_sendq_warn;
 };
 
 /* Declare the FIFO list implementation */
@@ -1689,8 +1707,8 @@ struct peer {
 	 * flag is unset, the corresponding override flag would be unset.
 	 *
 	 * This can be used for attributes like *send-community*, which are
-	 * implicitely enabled and have to be disabled explicitely, compared to
-	 * 'normal' attributes like *next-hop-self* which are implicitely set.
+	 * implicitly enabled and have to be disabled explicitly, compared to
+	 * 'normal' attributes like *next-hop-self* which are implicitly set.
 	 *
 	 * All operations dealing with flags should apply the following boolean
 	 * logic to keep the internal flag system in a sane state:
@@ -1888,6 +1906,7 @@ struct peer {
 /* received extended format encoding for OPEN message */
 #define PEER_STATUS_EXT_OPT_PARAMS_LENGTH	 (1U << 5)
 #define PEER_STATUS_BFD_STRICT_HOLD_TIME_EXPIRED (1U << 6) /* BFD strict hold time expired */
+#define PEER_STATUS_COND_ADV_PENDING		 (1U << 7) /* conditional advertisement pending */
 
 	/* Peer status af flags (reset in bgp_stop) */
 	uint16_t af_sflags[AFI_MAX][SAFI_MAX];
@@ -1964,7 +1983,7 @@ struct peer {
 	_Atomic uint32_t open_in;	 /* Open message input count */
 	_Atomic uint32_t open_out;	/* Open message output count */
 	_Atomic uint32_t update_in;       /* Update message input count */
-	_Atomic uint32_t update_out;      /* Update message ouput count */
+	_Atomic uint32_t update_out;      /* Update message output count */
 	_Atomic time_t update_time;       /* Update message received time. */
 	_Atomic uint32_t keepalive_in;    /* Keepalive input count */
 	_Atomic uint32_t keepalive_out;   /* Keepalive output count */
@@ -1999,11 +2018,6 @@ struct peer {
 	_Atomic time_t last_write;
 	/* timestamp when the last msg was written */
 	_Atomic time_t last_update;
-
-	/* only updated under io_mtx.
-	 * last_sendq_warn is only for ratelimiting log warning messages.
-	 */
-	time_t last_sendq_ok, last_sendq_warn;
 
 	/* Notify data. */
 	struct bgp_notify notify;
@@ -2054,6 +2068,9 @@ struct peer {
 
 	/* Accepted prefix count */
 	uint32_t pcount[AFI_MAX][SAFI_MAX];
+
+	/* Duplicate update count */
+	uint32_t pcount_dup[AFI_MAX][SAFI_MAX];
 
 	/* Max prefix count. */
 	uint32_t pmax[AFI_MAX][SAFI_MAX];
@@ -2456,6 +2473,9 @@ struct bgp_nlri {
 #define BGP_AIGP_TLV_METRIC_MAX 0xffffffffffffffffULL
 #define BGP_AIGP_TLV_METRIC_DESC "Accumulated IGP Metric"
 
+/* Max Buffer size for BGP Send Community */
+#define BGP_SEND_COMMUNITY_STR_SIZE 30
+
 /* Flag for peer_clear_soft().  */
 enum bgp_clear_type {
 	BGP_CLEAR_SOFT_NONE,
@@ -2706,6 +2726,8 @@ extern int peer_group_remote_as_delete(struct peer_group *group);
 extern int peer_group_listen_range_add(struct peer_group *group, struct prefix *range);
 extern void peer_group_notify_unconfig(struct peer_group *group);
 
+extern void bgp_zebra_suppress_fib_pending_config_retry(void);
+
 extern int peer_activate(struct peer *peer, afi_t afi, safi_t safi);
 extern int peer_deactivate(struct peer *peer, afi_t afi, safi_t safi);
 
@@ -2776,7 +2798,7 @@ extern int peer_distribute_set(struct peer *peer, afi_t afi, safi_t safi, int di
 extern int peer_distribute_unset(struct peer *peer, afi_t afi, safi_t safi, int direct);
 
 extern int peer_allowas_in_set(struct peer *peer, afi_t afi, safi_t safi, int allow_num,
-			       int origin);
+			       bool origin);
 extern int peer_allowas_in_unset(struct peer *peer, afi_t afi, safi_t safi);
 
 extern int peer_local_as_set(struct peer *peer, as_t as, bool no_prepend,

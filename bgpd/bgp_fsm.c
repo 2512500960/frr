@@ -172,8 +172,6 @@ static struct peer *peer_xfer_conn(struct peer *from_peer)
 
 	bgp_writes_off(going_away);
 	bgp_reads_off(going_away);
-	bgp_writes_off(keeper);
-	bgp_reads_off(keeper);
 
 	/*
 	 * Before exchanging FD remove doppelganger from
@@ -242,28 +240,22 @@ static struct peer *peer_xfer_conn(struct peer *from_peer)
 		XFREE(MTYPE_BGP_PEER_HOST, peer->hostname);
 		peer->hostname = NULL;
 	}
-	if (from_peer->hostname != NULL) {
-		peer->hostname = from_peer->hostname;
-		from_peer->hostname = NULL;
-	}
+	if (from_peer->hostname != NULL)
+		peer->hostname = XSTRDUP(MTYPE_BGP_PEER_HOST, from_peer->hostname);
 
 	if (peer->domainname) {
 		XFREE(MTYPE_BGP_PEER_HOST, peer->domainname);
 		peer->domainname = NULL;
 	}
-	if (from_peer->domainname != NULL) {
-		peer->domainname = from_peer->domainname;
-		from_peer->domainname = NULL;
-	}
+	if (from_peer->domainname != NULL)
+		peer->domainname = XSTRDUP(MTYPE_BGP_PEER_HOST, from_peer->domainname);
 
 	if (peer->soft_version) {
 		XFREE(MTYPE_BGP_SOFT_VERSION, peer->soft_version);
 		peer->soft_version = NULL;
 	}
-	if (from_peer->soft_version) {
-		peer->soft_version = from_peer->soft_version;
-		from_peer->soft_version = NULL;
-	}
+	if (from_peer->soft_version)
+		peer->soft_version = XSTRDUP(MTYPE_BGP_SOFT_VERSION, from_peer->soft_version);
 
 	FOREACH_AFI_SAFI (afi, safi) {
 		peer->af_sflags[afi][safi] = from_peer->af_sflags[afi][safi];
@@ -953,7 +945,7 @@ static bool bgp_update_delay_applicable(struct bgp *bgp)
 {
 	/* update_delay_over flag should be reset (set to 0) for any new
 	   applicability of the update-delay during BGP process lifetime.
-	   And it should be set after an occurence of the update-delay is
+	   And it should be set after an occurrence of the update-delay is
 	   over)*/
 	if (!bgp->update_delay_over)
 		return true;
@@ -1381,7 +1373,7 @@ static bool bgp_gr_check_all_eors(struct bgp *bgp, afi_t afi, safi_t safi,
 			 * deferred bestpath selection.
 			 *
 			 * 1st level of deferred bestpath selection will
-			 * be done when EORs are recieved from all the
+			 * be done when EORs are received from all the
 			 * directly connected peers, or when the
 			 * select-deferral-timer expires. If the timer
 			 * expired, it means that some of the directly
@@ -1415,7 +1407,7 @@ static bool bgp_gr_check_all_eors(struct bgp *bgp, afi_t afi, safi_t safi,
 			 */
 			if (PEER_IS_MULTIHOP(peer)) {
 				/*
-				 * If we have not recieved EOR from a
+				 * If we have not received EOR from a
 				 * multihop peer, start the tier2
 				 * select-deferral-timer only if EORs
 				 * are rcvd from all the directly
@@ -1446,7 +1438,7 @@ static bool bgp_gr_check_all_eors(struct bgp *bgp, afi_t afi, safi_t safi,
 				}
 				/*
 				 * If this is a directly connected peer
-				 * and if we haven't recieved EOR from
+				 * and if we haven't received EOR from
 				 * this peer yet, then we will wait to
 				 * do the 1st round of deferred
 				 * bestpath.
@@ -1515,7 +1507,7 @@ void bgp_gr_check_path_select(struct bgp *bgp, afi_t afi, safi_t safi)
 	 * this AFI-SAFI.
 	 *
 	 * This function returns false if EORs are not rcvd for this AFI-SAFI
-	 * from all the dirctly connected peers.
+	 * from all the directly connected peers.
 	 */
 	if (bgp_gr_check_all_eors(bgp, afi, safi, &multihop_eors_pending)) {
 		gr_info = &(bgp->gr_info[afi][safi]);
@@ -2169,7 +2161,7 @@ enum bgp_fsm_state_progress bgp_stop(struct peer_connection *connection)
 	return ret;
 }
 
-/* BGP peer is stoped by the error. */
+/* BGP peer is stopped by the error. */
 static enum bgp_fsm_state_progress
 bgp_stop_with_error(struct peer_connection *connection)
 {
@@ -2374,7 +2366,7 @@ bgp_connect_success_w_delayopen(struct peer_connection *connection)
 				   bgp_peer_get_connection_direction_string(connection));
 	}
 
-	/* set the DelayOpenTime to the inital value */
+	/* set the DelayOpenTime to the initial value */
 	peer->v_delayopen = peer->delayopen;
 
 	/* Start the DelayOpenTimer if it is not already running */
@@ -2584,7 +2576,7 @@ bgp_reconnect(struct peer_connection *connection)
 	if (ret < BGP_FSM_SUCCESS)
 		return ret;
 
-	/* Send graceful restart capabilty */
+	/* Send graceful restart capability */
 	BGP_GR_ROUTER_DETECT_AND_SEND_CAPABILITY_TO_ZEBRA(bgp, bgp->peer);
 
 	return bgp_start(connection);

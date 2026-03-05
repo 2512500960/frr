@@ -349,9 +349,8 @@ static void bgp_evpn_show_route_header(struct vty *vty, struct bgp *bgp,
 	vty_out(vty,
 		"BGP table version is %" PRIu64 ", local router ID is %pI4\n",
 		tbl_ver, &bgp->router_id);
-	vty_out(vty,
-		"Status codes: s suppressed, d damped, h history, * valid, > best, i - internal\n");
-	vty_out(vty, "Origin codes: i - IGP, e - EGP, ? - incomplete\n");
+	vty_out(vty, BGP_SHOW_SCODE_HEADER);
+	vty_out(vty, BGP_SHOW_OCODE_HEADER);
 	vty_out(vty,
 		"EVPN type-1 prefix: [1]:[EthTag]:[ESI]:[IPlen]:[VTEP-IP]:[Frag-id]\n");
 	vty_out(vty,
@@ -2343,8 +2342,8 @@ static void evpn_unconfigure_export_rt(struct bgp *bgp, struct bgpevpn *vpn,
 static void evpn_configure_vrf_rd(struct bgp *bgp_vrf, struct prefix_rd *rd,
 				  const char *rd_pretty)
 {
-	/* If we have already advertise type-5 routes with a diffrent RD, we
-	 * have to delete and withdraw them firs
+	/* If we have already advertise type-5 routes with a different RD, we
+	 * have to delete and withdraw them first
 	 */
 	bgp_evpn_handle_vrf_rd_change(bgp_vrf, 1);
 
@@ -2367,8 +2366,8 @@ static void evpn_configure_vrf_rd(struct bgp *bgp_vrf, struct prefix_rd *rd,
  */
 static void evpn_unconfigure_vrf_rd(struct bgp *bgp_vrf)
 {
-	/* If we have already advertise type-5 routes with a diffrent RD, we
-	 * have to delete and withdraw them firs
+	/* If we have already advertise type-5 routes with a different RD, we
+	 * have to delete and withdraw them first
 	 */
 	bgp_evpn_handle_vrf_rd_change(bgp_vrf, 1);
 
@@ -3545,7 +3544,7 @@ static void evpn_process_default_originate_cmd(struct bgp *bgp_vrf,
 			SET_FLAG(bgp_vrf->af_flags[AFI_L2VPN][SAFI_EVPN],
 				 BGP_L2VPN_EVPN_DEFAULT_ORIGINATE_IPV6);
 	} else {
-		/* bail out if we havent advertised the default route */
+		/* bail out if we haven't advertised the default route */
 		if (!evpn_default_originate_set(bgp_vrf, afi, safi))
 			return;
 		if (afi == AFI_IP)

@@ -113,10 +113,25 @@ static const struct frr_yang_module_info frr_ripd_info = {
 	}
 };
 
+static const struct frr_yang_module_info frr_vrf_info = {
+	.name = "frr-vrf",
+	.ignore_cfg_cbs = true,
+	.nodes = {
+		{
+			.xpath = "/frr-vrf:lib",
+			.cbs.notify = async_notification,
+		},
+		{
+			.xpath = NULL,
+		}
+	}
+};
+
 static const struct frr_yang_module_info *const mgmt_yang_modules[] = {
 	&frr_backend_info,
 	&frr_if_info,
 	&frr_ripd_info,
+	&frr_vrf_info,
 };
 
 FRR_DAEMON_INFO(mgmtd_testc, MGMTD_TESTC,
@@ -158,6 +173,8 @@ static void sigusr1(void)
 
 static FRR_NORETURN void quit(int exit_code)
 {
+	mgmt_be_client_destroy(mgmt_be_client);
+
 	event_cancel(&event_timeout);
 	darr_free(_client_cbs.config_xpaths);
 	darr_free(_client_cbs.oper_xpaths);

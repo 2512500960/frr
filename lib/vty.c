@@ -420,7 +420,7 @@ void vty_hello(struct vty *vty)
 		if (f) {
 			while (fgets(buf, sizeof(buf), f)) {
 				char *s;
-				/* work backwards to ignore trailling isspace()
+				/* work backwards to ignore trailing isspace()
 				 */
 				for (s = buf + strlen(buf);
 				     (s > buf) && isspace((unsigned char)s[-1]);
@@ -2488,7 +2488,7 @@ void vty_close(struct vty *vty)
 	if (vty->fd == STDIN_FILENO)
 		was_stdio = true;
 
-	XFREE(MTYPE_TMP, vty->pending_cmds_buf);
+	XFREE(MTYPE_NB_CMDS, vty->pending_cmds_buf);
 	XFREE(MTYPE_VTY, vty->buf);
 
 	if (vty->error) {

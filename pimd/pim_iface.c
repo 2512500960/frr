@@ -127,7 +127,7 @@ struct pim_interface *pim_if_new(struct interface *ifp, bool gm, bool pim,
 		GM_QUERY_MAX_RESPONSE_TIME_DSEC;
 	pim_ifp->gm_specific_query_max_response_time_dsec =
 		GM_SPECIFIC_QUERY_MAX_RESPONSE_TIME_DSEC;
-	pim_ifp->gm_last_member_query_count = GM_DEFAULT_ROBUSTNESS_VARIABLE;
+	pim_ifp->gm_last_member_query_count = 0;
 	pim_ifp->gm_group_limit = UINT32_MAX;
 	pim_ifp->gm_source_limit = UINT32_MAX;
 	pim_ifp->periodic_jp_sec = -1;
@@ -274,8 +274,11 @@ static void pim_addr_change(struct interface *ifp)
 	pim_ifp = ifp->info;
 	assert(pim_ifp);
 
-	pim_if_dr_election(ifp); /* router's own DR Priority (addr) changes --
-				    Done TODO T30 */
+	pim_if_dr_election(ifp);
+
+	if (!pim_ifp->pim_enable)
+		return;
+
 	pim_if_update_join_desired(pim_ifp); /* depends on DR */
 	pim_if_update_could_assert(ifp);     /* depends on DR */
 	pim_if_update_my_assert_metric(ifp); /* depends on could_assert */
@@ -471,13 +474,8 @@ static void detect_address_change(struct interface *ifp, int force_prim_as_any,
 	}
 
 
-	if (changed) {
-		if (!pim_ifp->pim_enable) {
-			return;
-		}
-
+	if (changed)
 		pim_addr_change(ifp);
-	}
 
 	/* XXX: if we have unnumbered interfaces we need to run detect address
 	 * address change on all of them when the lo address changes */
@@ -1743,7 +1741,7 @@ void pim_if_create_pimreg(struct pim_instance *pim)
 
 		/*
 		 * The pimreg interface might has been removed from
-		 * kerenl with the VRF's deletion.  It must be
+		 * kernel with the VRF's deletion.  It must be
 		 * recreated, so delete the old one first.
 		 */
 		if (pim->regiface->info)

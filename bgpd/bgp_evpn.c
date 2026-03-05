@@ -1917,7 +1917,7 @@ static void bgp_evpn_get_sync_info(struct bgp *bgp, esi_t *esi,
 		return;
 
 	tmp_esi = bgp_evpn_attr_get_esi(second_best_path->attr);
-	/* if this has the same ES desination as the local path
+	/* if this has the same ES destination as the local path
 	 * it is a sync path
 	 */
 	if (!memcmp(esi, tmp_esi, sizeof(esi_t))) {
@@ -3970,7 +3970,7 @@ static bool bgp_evpn_route_matches_macvrf_soo(struct bgp_path_info *pi,
 }
 
 /* This API will scan evpn routes for checking attribute's rmac
- * macthes with bgp instance router mac. It avoid installing
+ * matches with bgp instance router mac. It avoid installing
  * route into bgp vrf table and remote rmac in bridge table.
  */
 static int bgp_evpn_route_rmac_self_check(struct bgp *bgp_vrf,
@@ -4663,7 +4663,7 @@ void update_advertise_vrf_routes(struct bgp *bgp_vrf)
 
 /*
  * update and advertise local routes for a VRF as type-5 routes.
- * This is invoked upon RD change for a VRF. Note taht the processing is only
+ * This is invoked upon RD change for a VRF. Note that the processing is only
  * done in the global route table using the routes which already exist in the
  * VRF routing table
  */
@@ -7357,7 +7357,7 @@ int bgp_evpn_local_l3vni_add(vni_t l3vni, vrf_id_t vrf_id,
 	/* advertise type-5 routes if needed */
 	update_advertise_vrf_routes(bgp_vrf);
 
-	/* install all remote routes belonging to this l3vni into correspondng
+	/* install all remote routes belonging to this l3vni into corresponding
 	 * vrf */
 	install_routes_for_vrf(bgp_vrf);
 
@@ -7690,7 +7690,7 @@ int bgp_evpn_local_vni_add(struct bgp *bgp, vni_t vni,
  * Handle change in setting for BUM handling. The supported values
  * are head-end replication and dropping all BUM packets. Any change
  * should be registered with zebra. Also, if doing head-end replication,
- * need to advertise local VNIs as EVPN RT-3 wheras, if BUM packets are
+ * need to advertise local VNIs as EVPN RT-3 whereas, if BUM packets are
  * to be dropped, the RT-3s must be withdrawn.
  */
 void bgp_evpn_flood_control_change(struct bgp *bgp)
@@ -7787,7 +7787,7 @@ void bgp_evpn_init(struct bgp *bgp)
 	bgp->l2vnis->cmp = vni_list_cmp;
 	bgp->evpn_info =
 		XCALLOC(MTYPE_BGP_EVPN_INFO, sizeof(struct bgp_evpn_info));
-	/* By default Duplicate Address Dection is enabled.
+	/* By default Duplicate Address Detection is enabled.
 	 * Max-moves (N) 5, detection time (M) 180
 	 * default action is warning-only
 	 * freeze action permanently freezes address,
@@ -8289,20 +8289,13 @@ mpls_label_t *bgp_evpn_path_info_labels_get_l3vni(mpls_label_t *labels,
  */
 vni_t bgp_evpn_path_info_get_l3vni(const struct bgp_path_info *pi)
 {
-	if (!pi->extra)
+	if (!BGP_PATH_INFO_NUM_LABELS(pi))
 		return 0;
 
-	mpls_label_t *label = bgp_evpn_path_info_labels_get_l3vni(pi->extra->labels->label,
-								  pi->extra->labels->num_labels);
-	if (!label) {
-		/* Shouldn't happen: label not found in pi->extra */
-		flog_err(EC_BGP_PATH_WITHOUT_LABEL,
-			 "%s: path_info without label stack, label=%p, num_labels=%d", __func__,
-			 pi->extra->labels->label, pi->extra->labels->num_labels);
-		return 0;
-	}
-
-	return label2vni(label);
+	return label2vni(
+		bgp_evpn_path_info_labels_get_l3vni(pi->extra->labels->label,
+						    pi->extra->labels
+							    ->num_labels));
 }
 
 /*

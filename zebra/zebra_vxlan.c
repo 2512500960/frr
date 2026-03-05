@@ -460,6 +460,13 @@ static void zevpn_print_mac_hash_all_evpn(struct hash_bucket *bucket, void *ctxt
 		json_evpn = json_object_new_object();
 		json_mac = json_object_new_object();
 		snprintf(vni_str, VNI_STR_LEN, "%u", zevpn->vni);
+
+		/* Hold the containers open while we iterate through macs */
+		frr_json_set_open(json_evpn);
+		frr_json_set_open(json_mac);
+
+		json_object_object_add(json_evpn, "macs", json_mac);
+		json_object_object_add(json, vni_str, json_evpn);
 	}
 
 	if (!CHECK_FLAG(wctx->flags, SHOW_REMOTE_MAC_FROM_VTEP)) {
@@ -476,9 +483,13 @@ static void zevpn_print_mac_hash_all_evpn(struct hash_bucket *bucket, void *ctxt
 
 	if (!num_macs) {
 		if (json) {
-			json_object_free(json_mac); /* Unused */
 			json_object_int_add(json_evpn, "numMacs", num_macs);
-			json_object_object_add(json, vni_str, json_evpn);
+
+			/* Finish and flush the containers */
+			frr_json_set_complete(json_mac);
+			frr_json_set_complete(json_evpn);
+
+			frr_json_vty_out(vty, json);
 		}
 		return;
 	}
@@ -494,12 +505,13 @@ static void zevpn_print_mac_hash_all_evpn(struct hash_bucket *bucket, void *ctxt
 	else
 		hash_iterate(zevpn->mac_table, zebra_evpn_print_mac_hash, wctx);
 	wctx->json = json;
+
 	if (json) {
-		if (wctx->count)
-			json_object_object_add(json_evpn, "macs", json_mac);
-		else
-			json_object_free(json_mac);
-		json_object_object_add(json, vni_str, json_evpn);
+		/* We're done with these containers now */
+		frr_json_set_complete(json_mac);
+		frr_json_set_complete(json_evpn);
+
+		frr_json_vty_out(vty, json);
 	}
 }
 
@@ -507,7 +519,7 @@ static void zevpn_print_mac_hash_all_evpn(struct hash_bucket *bucket, void *ctxt
  * Print MACs in detail for all EVPNs.
  */
 static void zevpn_print_mac_hash_all_evpn_detail(struct hash_bucket *bucket,
-					       void *ctxt)
+						 void *ctxt)
 {
 	struct vty *vty;
 	json_object *json = NULL, *json_evpn = NULL;
@@ -542,6 +554,13 @@ static void zevpn_print_mac_hash_all_evpn_detail(struct hash_bucket *bucket,
 		json_evpn = json_object_new_object();
 		json_mac = json_object_new_object();
 		snprintf(vni_str, VNI_STR_LEN, "%u", zevpn->vni);
+
+		/* Hold the json containers open while we iterate through macs */
+		frr_json_set_open(json_evpn);
+		frr_json_set_open(json_mac);
+
+		json_object_object_add(json_evpn, "macs", json_mac);
+		json_object_object_add(json, vni_str, json_evpn);
 	}
 
 	if (!CHECK_FLAG(wctx->flags, SHOW_REMOTE_MAC_FROM_VTEP)) {
@@ -563,10 +582,13 @@ static void zevpn_print_mac_hash_all_evpn_detail(struct hash_bucket *bucket,
 		hash_iterate(zevpn->mac_table, zebra_evpn_print_mac_hash_detail,
 			     wctx);
 	wctx->json = json;
+
 	if (json) {
-		if (wctx->count)
-			json_object_object_add(json_evpn, "macs", json_mac);
-		json_object_object_add(json, vni_str, json_evpn);
+		/* We're done with these json containers now */
+		frr_json_set_complete(json_mac);
+		frr_json_set_complete(json_evpn);
+
+		frr_json_vty_out(vty, json);
 	}
 }
 
@@ -1775,6 +1797,57 @@ static int svd_nh_uninstall(struct zebra_l3vni *zl3vni, struct zebra_neigh *n)
 	return _nh_uninstall(zl3vni->vxlan_if, n);
 }
 
+/* Check for stale RMAC and delete if exists */
+static void zl3vni_check_del_rmac(struct zebra_l3vni *zl3vni, const struct ethaddr old_rmac,
+				  const struct ipaddr *vtep_ip)
+{
+	struct zebra_mac *zrmac = NULL;
+
+	zrmac = zl3vni_rmac_lookup(zl3vni, &old_rmac);
+	if (!zrmac) {
+		if (IS_ZEBRA_DEBUG_VXLAN)
+			zlog_debug("L3VNI %u RMAC %pEA is deleted from cache", zl3vni->vni,
+				   &old_rmac);
+		return;
+	}
+	if (listcount(zrmac->nh_list)) {
+		struct ipaddr *curr_vtep = NULL;
+		struct listnode *node = NULL, *nnode = NULL;
+
+		for (ALL_LIST_ELEMENTS(zrmac->nh_list, node, nnode, curr_vtep)) {
+			if (ipaddr_cmp(curr_vtep, vtep_ip) == 0)
+				break;
+		}
+		if (node) {
+			l3vni_rmac_nh_free(curr_vtep);
+			list_delete_node(zrmac->nh_list, node);
+			/* Get the first node in the list */
+			node = listhead(zrmac->nh_list);
+			/* Update the forward reference vtep IP to first node in list */
+			if (node) {
+				curr_vtep = listgetdata(node);
+				if (IS_ZEBRA_DEBUG_VXLAN)
+					zlog_debug("Updating VTEP IP %pIA", curr_vtep);
+				zrmac->fwd_info.r_vtep_ip = *curr_vtep;
+			}
+		}
+		if (IS_ZEBRA_DEBUG_VXLAN) {
+			zlog_debug("Zrmac cache nexthop list");
+			for (ALL_LIST_ELEMENTS(zrmac->nh_list, node, nnode, curr_vtep))
+				zlog_debug("%pIA", curr_vtep);
+		}
+	}
+
+	if (!listcount(zrmac->nh_list)) {
+		if (IS_ZEBRA_DEBUG_VXLAN)
+			zlog_debug("L3VNI %u uninstalling old RMAC %pEA for nexthop %pIA",
+				   zl3vni->vni, &old_rmac, vtep_ip);
+		/* Uninstall from kernel and rmac table */
+		zl3vni_rmac_uninstall(zl3vni, zrmac);
+		zl3vni_rmac_del(zl3vni, zrmac);
+	}
+}
+
 /* Add remote vtep as a neigh entry */
 static int zl3vni_remote_nh_add(struct zebra_l3vni *zl3vni,
 				const struct ipaddr *vtep_ip,
@@ -1807,6 +1880,7 @@ static int zl3vni_remote_nh_add(struct zebra_l3vni *zl3vni,
 		frrtrace(5, frr_zebra, remote_nh_add_rmac_change, zl3vni->vni, &nh->emac, rmac,
 			 vtep_ip, nh->refcnt);
 
+		zl3vni_check_del_rmac(zl3vni, nh->emac, vtep_ip);
 		memcpy(&nh->emac, rmac, ETH_ALEN);
 		/* install (update) the nh neigh in kernel */
 		zl3vni_nh_install(zl3vni, nh);
@@ -3420,8 +3494,10 @@ void zebra_vxlan_print_macs_all_vni(struct vty *vty, struct zebra_vrf *zvrf,
 	struct mac_walk_ctx wctx;
 	json_object *json = NULL;
 
-	if (use_json)
+	if (use_json) {
 		json = json_object_new_object();
+		frr_json_set_open(json);
+	}
 
 	if (!is_evpn_enabled()) {
 		if (use_json)
@@ -3432,11 +3508,14 @@ void zebra_vxlan_print_macs_all_vni(struct vty *vty, struct zebra_vrf *zvrf,
 	memset(&wctx, 0, sizeof(wctx));
 	wctx.vty = vty;
 	wctx.json = json;
+	wctx.top_json = json;
 	wctx.print_dup = print_dup;
 	hash_iterate(zvrf->evpn_table, zevpn_print_mac_hash_all_evpn, &wctx);
 
-	if (use_json)
-		vty_json(vty, json);
+	if (use_json) {
+		frr_json_set_complete(json);
+		frr_json_vty_out(vty, json);
+	}
 }
 
 /*
@@ -3449,8 +3528,10 @@ void zebra_vxlan_print_macs_all_vni_detail(struct vty *vty,
 	struct mac_walk_ctx wctx;
 	json_object *json = NULL;
 
-	if (use_json)
+	if (use_json) {
 		json = json_object_new_object();
+		frr_json_set_open(json);
+	}
 
 	if (!is_evpn_enabled()) {
 		if (use_json)
@@ -3462,11 +3543,16 @@ void zebra_vxlan_print_macs_all_vni_detail(struct vty *vty,
 	wctx.vty = vty;
 	wctx.json = json;
 	wctx.print_dup = print_dup;
+
+	wctx.top_json = json;
+
 	hash_iterate(zvrf->evpn_table, zevpn_print_mac_hash_all_evpn_detail,
 		     &wctx);
 
-	if (use_json)
-		vty_json(vty, json);
+	if (use_json) {
+		frr_json_set_complete(json);
+		frr_json_vty_out(vty, json);
+	}
 }
 
 /*

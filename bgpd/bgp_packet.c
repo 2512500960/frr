@@ -119,12 +119,14 @@ static void bgp_packet_add(struct peer_connection *connection,
 		 * after it'll get confused
 		 */
 		if (!stream_fifo_count_safe(connection->obuf))
-			peer->last_sendq_ok = monotime(NULL);
+			atomic_store_explicit(&connection->last_sendq_ok, monotime(NULL),
+					      memory_order_relaxed);
 
 		stream_fifo_push(connection->obuf, s);
 	}
 
-	delta = monotime(NULL) - peer->last_sendq_ok;
+	delta = monotime(NULL) -
+		atomic_load_explicit(&connection->last_sendq_ok, memory_order_relaxed);
 
 	if (CHECK_FLAG(peer->flags, PEER_FLAG_TIMER))
 		holdtime = atomic_load_explicit(&peer->holdtime, memory_order_relaxed);
@@ -149,11 +151,11 @@ static void bgp_packet_add(struct peer_connection *connection,
 			 peer, sendholdtime);
 		event_add_event(bm->master, bgp_event_stop_with_notify, connection, 0,
 				&connection->t_stop_with_notify);
-	} else if (delta > (intmax_t)holdtime && monotime(NULL) - peer->last_sendq_warn > 5) {
+	} else if (delta > (intmax_t)holdtime && monotime(NULL) - connection->last_sendq_warn > 5) {
 		flog_warn(EC_BGP_SENDQ_STUCK_WARN,
 			  "%pBP has not made any SendQ progress for 1 holdtime (%us), peer overloaded?",
 			  peer, holdtime);
-		peer->last_sendq_warn = monotime(NULL);
+		connection->last_sendq_warn = monotime(NULL);
 	}
 }
 
@@ -444,8 +446,22 @@ void bgp_generate_updgrp_packets(struct event *event)
 	    || bgp_update_delay_active(peer->bgp))
 		return;
 
-	if (peer->connection->t_routeadv)
+	/* If the MRAI timer is running and we have conditional advertisement
+	 * configured, send the updates only after the MRAI timer expires unless
+	 * we have pending conditional advertisements.
+	 * Pending conditional advertisements are indicated by the conditional
+	 * advertisement timer which is set when conditional advertisement
+	 * processing is done and routes needs to be conditionally advertised or
+	 * withdrawn.
+	 */
+	if (peer->connection->t_routeadv && !CHECK_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING))
 		return;
+
+	if (CHECK_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING)) {
+		if (peer->connection->t_routeadv && bgp_debug_neighbor_events(peer))
+			zlog_debug("%pBP: Pending conditional advertisement, ignoring MRAI timer",
+				   peer);
+	}
 
 	/*
 	 * Since the following is a do while loop
@@ -454,14 +470,17 @@ void bgp_generate_updgrp_packets(struct event *event)
 	 */
 	if (connection->obuf->count >= bm->outq_limit) {
 		bgp_write_proceed_actions(peer);
+		UNSET_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING);
 		return;
 	}
 
 	/* If a GR restarter, we have to wait till path-selection
 	 * is complete.
 	 */
-	if (!peer->bgp->gr_multihop_peer_exists && bgp_in_graceful_restart())
+	if (!peer->bgp->gr_multihop_peer_exists && bgp_in_graceful_restart()) {
+		UNSET_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING);
 		return;
+	}
 
 	do {
 		enum bgp_af_index index;
@@ -597,6 +616,8 @@ void bgp_generate_updgrp_packets(struct event *event)
 
 	if (generated)
 		bgp_writes_on(connection);
+
+	UNSET_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING);
 
 	bgp_write_proceed_actions(peer);
 }
@@ -803,13 +824,19 @@ struct bgp_notify bgp_notify_decapsulate_hard_reset(struct bgp_notify *notify)
 {
 	struct bgp_notify bn = {};
 
+	/* Validate inner length */
+	if (notify->length < 2)
+		goto done;
+
 	bn.code = notify->raw_data[0];
 	bn.subcode = notify->raw_data[1];
 	bn.length = notify->length - 2;
+	if (bn.length > 0) {
+		bn.raw_data = XMALLOC(MTYPE_BGP_NOTIFICATION, bn.length);
+		memcpy(bn.raw_data, notify->raw_data + 2, bn.length);
+	}
 
-	bn.raw_data = XMALLOC(MTYPE_BGP_NOTIFICATION, bn.length);
-	memcpy(bn.raw_data, notify->raw_data + 2, bn.length);
-
+done:
 	return bn;
 }
 
@@ -1975,13 +2002,15 @@ static int bgp_open_receive(struct peer_connection *connection,
 					  BGP_NOTIFY_OPEN_BAD_PEER_AS,
 					  notify_data_remote_as, 2);
 		return BGP_Stop;
-	} else if (peer->as_type == AS_AUTO) {
+	} else if (CHECK_FLAG(peer->as_type, AS_AUTO)) {
 		if (remote_as == peer->bgp->as) {
 			peer->as = peer->local_as;
 			SET_FLAG(peer->as_type, AS_INTERNAL);
+			UNSET_FLAG(peer->as_type, AS_EXTERNAL);
 		} else {
 			peer->as = remote_as;
 			SET_FLAG(peer->as_type, AS_EXTERNAL);
+			UNSET_FLAG(peer->as_type, AS_INTERNAL);
 		}
 	} else if (peer->as_type == AS_INTERNAL) {
 		if (remote_as != peer->bgp->as) {
@@ -2532,7 +2561,7 @@ static int bgp_update_receive(struct peer_connection *connection,
 	if (!update_len && !withdraw_len && nlris[NLRI_MP_UPDATE].length == 0) {
 		afi_t afi = 0;
 		safi_t safi;
-		/* Non-MP IPv4/Unicast is a completely emtpy UPDATE - already
+		/* Non-MP IPv4/Unicast is a completely empty UPDATE - already
 		 * checked
 		 * update and withdraw NLRI lengths are 0.
 		 */
@@ -2575,6 +2604,14 @@ static int bgp_notify_receive(struct peer_connection *connection,
 	struct bgp_notify inner = {};
 	bool hard_reset = false;
 
+	/* Validate message size */
+	if (size < 2) {
+		flog_err(EC_BGP_NOTIFY_RCV,
+			 "%s [Error] Notify packet error (packet length is short)",
+			 peer->host);
+		return BGP_Stop;
+	}
+
 	if (peer->notify.data) {
 		XFREE(MTYPE_BGP_NOTIFICATION, peer->notify.data);
 		peer->notify.length = 0;
@@ -2586,25 +2623,33 @@ static int bgp_notify_receive(struct peer_connection *connection,
 	outer.length = size - 2;
 	outer.data = NULL;
 	outer.raw_data = NULL;
-	if (outer.length) {
+	if (outer.length > 0) {
 		outer.raw_data = XMALLOC(MTYPE_BGP_NOTIFICATION, outer.length);
 		memcpy(outer.raw_data, stream_pnt(connection->curr), outer.length);
 	}
 
 	hard_reset =
 		bgp_notify_received_hard_reset(peer, outer.code, outer.subcode);
-	if (hard_reset && outer.length) {
-		inner = bgp_notify_decapsulate_hard_reset(&outer);
+	if (hard_reset) {
+		/* Hard reset treatment: we expect but don't require inner error codes */
 		peer->notify.hard_reset = true;
+		/* If we have at least an inner code and subcode, capture them */
+		if (outer.length > 1) {
+			inner = bgp_notify_decapsulate_hard_reset(&outer);
+		} else {
+			inner = outer;
+			inner.length = 0;
+			inner.raw_data = NULL;
+		}
 	} else {
 		inner = outer;
 	}
 
-	/* Preserv notify code and sub code. */
+	/* Preserve notify code and sub code. */
 	peer->notify.code = inner.code;
 	peer->notify.subcode = inner.subcode;
 	/* For further diagnostic record returned Data. */
-	if (inner.length) {
+	if (inner.length > 0) {
 		peer->notify.length = inner.length;
 		peer->notify.data =
 			XMALLOC(MTYPE_BGP_NOTIFICATION, inner.length);
@@ -2617,7 +2662,7 @@ static int bgp_notify_receive(struct peer_connection *connection,
 		int first = 0;
 		char c[4];
 
-		if (inner.length) {
+		if (inner.length > 0) {
 			inner.data = XMALLOC(MTYPE_BGP_NOTIFICATION,
 					     inner.length * 3);
 			for (i = 0; i < inner.length; i++)
@@ -2639,19 +2684,20 @@ static int bgp_notify_receive(struct peer_connection *connection,
 		}
 
 		bgp_notify_print(peer, &inner, "received", hard_reset);
-		if (inner.length) {
+		if (inner.length > 0) {
 			XFREE(MTYPE_BGP_NOTIFICATION, inner.data);
 			inner.length = 0;
 		}
-		if (outer.length) {
-			XFREE(MTYPE_BGP_NOTIFICATION, outer.data);
-			XFREE(MTYPE_BGP_NOTIFICATION, outer.raw_data);
-
+		if (outer.length > 0) {
 			/* If this is a Hard Reset notification, we MUST free
 			 * the inner (encapsulated) notification too.
 			 */
-			if (hard_reset)
+			if (hard_reset && (inner.raw_data != outer.raw_data))
 				XFREE(MTYPE_BGP_NOTIFICATION, inner.raw_data);
+
+			XFREE(MTYPE_BGP_NOTIFICATION, outer.data);
+			XFREE(MTYPE_BGP_NOTIFICATION, outer.raw_data);
+
 			outer.length = 0;
 		}
 	}
@@ -2976,7 +3022,7 @@ static int bgp_route_refresh_receive(struct peer_connection *connection,
 				peer->orf_plist[afi][safi];
 		}
 
-		/* Avoid supressing duplicate routes later
+		/* Avoid suppressing duplicate routes later
 		 * when processing in subgroup_announce_table().
 		 */
 		force_update = true;

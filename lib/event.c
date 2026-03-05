@@ -90,7 +90,7 @@ struct fd_handler {
 };
 #endif
 
-/* Master of the theads. */
+/* Master of the threads. */
 struct event_loop {
 	char *name;
 
@@ -1189,7 +1189,7 @@ done:
 		;
 
 		/* When poll() is used, we need to remove the io_pipe[0]
-		 * from m->handler.copy and decreate "num" as fast as
+		 * from m->handler.copy and decrease "num" as fast as
 		 * possible. Otherwise, when current thread is awakened,
 		 * even if there is no ready I/O task, thread_process_io
 		 * will still iterate over m->handler.copy until io_pipe[0]
@@ -2311,7 +2311,7 @@ static inline void thread_process_io_inner_loop(struct event_loop *m,
 	 * m->handler.pfds while we were asleep is the .events
 	 * field in a given pollfd. Barring event_cancel() that
 	 * value should be a superset of the values we have in our
-	 * copy, so there's no need to update it. Similarily,
+	 * copy, so there's no need to update it. Similarly,
 	 * barring deletion, the fd should still be a valid index
 	 * into the master's pfds.
 	 *
@@ -2573,7 +2573,7 @@ unsigned long event_consumed_time(RUSAGE_T *now, RUSAGE_T *start,
 	/*
 	 * FreeBSD appears to have an issue when calling clock_gettime
 	 * with CLOCK_THREAD_CPUTIME_ID really close to each other
-	 * occassionally the now time will be before the start time.
+	 * occasionally the now time will be before the start time.
 	 * This is not good and FRR is ending up with CPU HOG's
 	 * when the subtraction wraps to very large numbers
 	 *

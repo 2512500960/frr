@@ -565,7 +565,7 @@ const char *bgp_notify_admin_message(char *buf, size_t bufsz, uint8_t *data,
 }
 
 /* dump notify packet */
-void bgp_notify_print(struct peer *peer, struct bgp_notify *bgp_notify,
+void bgp_notify_print(const struct peer *peer, const struct bgp_notify *bgp_notify,
 		      const char *direct, bool hard_reset)
 {
 	const char *subcode_str;
@@ -1520,7 +1520,7 @@ DEFPY (debug_bgp_update_prefix_afi_safi,
        "IPv4 prefix\n"
        "IPv6 prefix\n")
 {
-	struct prefix argv_p;
+	struct prefix argv_p = { 0 };
 	int ret = CMD_SUCCESS;
 
 	ret = bgp_debug_parse_evpn_prefix(vty, argv, argc, &argv_p);
@@ -1578,7 +1578,7 @@ DEFPY (no_debug_bgp_update_prefix_afi_safi,
        "IPv4 prefix\n"
        "IPv6 prefix\n")
 {
-	struct prefix argv_p;
+	struct prefix argv_p = { 0 };
 	bool found_prefix = false;
 	int ret = CMD_SUCCESS;
 

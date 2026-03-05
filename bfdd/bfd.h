@@ -129,7 +129,7 @@ struct bfd_pkt {
 };
 
 /*
- * Format of authentification.
+ * Format of authentication.
  */
 struct bfd_auth {
 	uint8_t type;
@@ -538,7 +538,7 @@ void socket_close(int *s);
 /*
  * bfd_packet.c
  *
- * Contains the code related with receiving/seding, packing/unpacking BFD data.
+ * Contains the code related with receiving/sending, packing/unpacking BFD data.
  */
 int bp_set_ttlv6(int sd, uint8_t value);
 int bp_set_ttl(int sd, uint8_t value);
@@ -608,7 +608,7 @@ int bfd_session_enable(struct bfd_session *bs);
 void bfd_session_disable(struct bfd_session *bs);
 struct bfd_session *ptm_bfd_sess_new(struct bfd_peer_cfg *bpc);
 int ptm_bfd_sess_del(struct bfd_peer_cfg *bpc);
-void ptm_bfd_sess_dn(struct bfd_session *bfd, uint8_t diag);
+void ptm_bfd_sess_dn(struct bfd_session *bfd, uint8_t diag, bool notify_admin_down);
 void ptm_bfd_sess_up(struct bfd_session *bfd);
 void ptm_bfd_echo_stop(struct bfd_session *bfd);
 void ptm_bfd_echo_start(struct bfd_session *bfd);

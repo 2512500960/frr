@@ -195,7 +195,7 @@ static void connected_remove_kernel_for_connected(afi_t afi, safi_t safi, struct
 	/*
 	 * Needs to be early as that the actual route_node may not exist yet
 	 */
-	rib_meta_queue_early_route_cleanup(p, ZEBRA_ROUTE_KERNEL);
+	rib_meta_queue_early_route_cleanup(p, afi, safi, zvrf->vrf->vrf_id, ZEBRA_ROUTE_KERNEL);
 
 	if (!table)
 		return;
@@ -329,23 +329,19 @@ void connected_up(struct interface *ifp, struct connected *ifc)
 	if (!CHECK_FLAG(ifc->flags, ZEBRA_IFA_NOPREFIXROUTE)) {
 		connected_remove_kernel_for_connected(afi, SAFI_UNICAST, zvrf, &p, &nh);
 
-		rib_add(afi, SAFI_UNICAST, zvrf->vrf->vrf_id,
-			ZEBRA_ROUTE_CONNECT, 0, flags, &p, NULL, &nh, 0,
-			zvrf->table_id, metric, 0, 0, 0, false);
+		rib_add(afi, SAFI_UNICAST, zvrf->vrf->vrf_id, ZEBRA_ROUTE_CONNECT, 0, flags, &p,
+			NULL, &nh, 0, zvrf->table_id, metric, 0, 0, 0, false, true);
 
 		connected_remove_kernel_for_connected(afi, SAFI_MULTICAST, zvrf, &p, &nh);
-		rib_add(afi, SAFI_MULTICAST, zvrf->vrf->vrf_id,
-			ZEBRA_ROUTE_CONNECT, 0, flags, &p, NULL, &nh, 0,
-			zvrf->table_id, metric, 0, 0, 0, false);
+		rib_add(afi, SAFI_MULTICAST, zvrf->vrf->vrf_id, ZEBRA_ROUTE_CONNECT, 0, flags, &p,
+			NULL, &nh, 0, zvrf->table_id, metric, 0, 0, 0, false, true);
 	}
 
 	if (install_local) {
-		rib_add(afi, SAFI_UNICAST, zvrf->vrf->vrf_id, ZEBRA_ROUTE_LOCAL,
-			0, flags, &plocal, NULL, &nh, 0, zvrf->table_id, 0, 0,
-			0, 0, false);
-		rib_add(afi, SAFI_MULTICAST, zvrf->vrf->vrf_id,
-			ZEBRA_ROUTE_LOCAL, 0, flags, &plocal, NULL, &nh, 0,
-			zvrf->table_id, 0, 0, 0, 0, false);
+		rib_add(afi, SAFI_UNICAST, zvrf->vrf->vrf_id, ZEBRA_ROUTE_LOCAL, 0, flags, &plocal,
+			NULL, &nh, 0, zvrf->table_id, 0, 0, 0, 0, false, true);
+		rib_add(afi, SAFI_MULTICAST, zvrf->vrf->vrf_id, ZEBRA_ROUTE_LOCAL, 0, flags,
+			&plocal, NULL, &nh, 0, zvrf->table_id, 0, 0, 0, 0, false, true);
 	}
 
 	/* Schedule LSP forwarding entries for processing, if appropriate. */

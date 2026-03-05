@@ -440,6 +440,15 @@ Route Selection
 
    Disabled by default.
 
+.. clicmd:: bgp bestpath use-imported-attributes
+
+   When routes are leaked between VRFs using ``import vrf``, the bestpath
+   selection process by default uses the source VRF's path attributes (AS path
+   length, Origin, MED, Originator-ID) for comparison. This command changes
+   the behavior to use the imported path's attributes instead.
+
+   Disabled by default.
+
 .. clicmd:: bgp bestpath med missing-as-worst
 
    If the paths MED value is missing and this command is configured
@@ -1438,6 +1447,12 @@ Redistribute routes from a routing table number into BGP.
 
    Redistribute VNC direct (not via zebra) routes to BGP process.
 
+.. clicmd:: show bgp [<view|vrf> VRFNAME] <ipv4|ipv6> unicast redistribute [json]
+
+   Display the current redistribution configuration for the specified BGP
+   instance. Shows which protocols are being redistributed into BGP along with
+   their associated metrics, instances, and route-maps if configured.
+
 .. clicmd:: bgp update-delay MAX-DELAY
 
 .. clicmd:: bgp update-delay MAX-DELAY ESTABLISH-WAIT
@@ -2126,9 +2141,17 @@ Configuring Peers
 
 .. clicmd:: neighbor PEER advertisement-interval (0-600)
 
-   Setup the minimum route advertisement interval(mrai) for the
-   peer in question.  This number is between 0 and 600 seconds,
+   Setup the minimum route advertisement interval(MRAI) for the
+   peer in question. This number is between 0 and 600 seconds,
    with the default advertisement interval being 0.
+
+.. note::
+
+   If the conditional advertisement feature is enabled, the advertisement-interval
+   value (MRAI) will be ignored during the conditional advertisement phase.
+
+   This is because the conditional advertisement feature has its own timers to
+   trigger the advertisement/scanning of desired routes.
 
 .. clicmd:: neighbor PEER timers (0-65535) (0-65535)
 
@@ -4530,6 +4553,11 @@ displays IPv6 routing table.
 .. clicmd:: show bgp router [json]
 
    This command displays information related BGP router and Graceful Restart.
+
+.. clicmd:: show bgp [<view|vrf> VIEWVRFNAME] bestpath [json]
+
+   This command displays the BGP best path selection criteria configured
+   for the specified VRF or view.
 
 Some other commands provide additional options for filtering the output.
 

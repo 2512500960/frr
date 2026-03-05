@@ -3235,6 +3235,9 @@ static void bgp_zebra_connected(struct zclient *zclient)
 
 	bgp_zebra_instance_register(bgp);
 
+	/* Retry the deferred suppress-fib-pending configuration */
+	bgp_zebra_suppress_fib_pending_config_retry();
+
 	/* TODO - What if we have peers and networks configured, do we have to
 	 * kick-start them?
 	 */
@@ -3374,7 +3377,10 @@ static int bgp_zebra_process_local_l3vni(ZAPI_CALLBACK_ARGS)
 	l3vni = stream_getl(s);
 	if (cmd == ZEBRA_L3VNI_ADD) {
 		stream_get(&svi_rmac, s, sizeof(struct ethaddr));
-		stream_get_ipaddr(s, &originator_ip);
+		if (!stream_get_ipaddr(s, &originator_ip)) {
+			zlog_err("Unable to read originator ip address from stream");
+			return 0;
+		}
 		stream_get(&filter, s, sizeof(int));
 		svi_ifindex = stream_getl(s);
 		stream_get(&vrr_rmac, s, sizeof(struct ethaddr));
@@ -3411,7 +3417,7 @@ static int bgp_zebra_process_local_vni(ZAPI_CALLBACK_ARGS)
 	struct stream *s;
 	vni_t vni;
 	struct bgp *bgp;
-	struct ipaddr vtep_ip = {0};
+	struct ipaddr vtep_ip = { .ipa_type = IPADDR_NONE };
 	vrf_id_t tenant_vrf_id = VRF_DEFAULT;
 	struct in_addr mcast_grp = {INADDR_ANY};
 	ifindex_t svi_ifindex = 0;

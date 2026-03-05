@@ -58,6 +58,7 @@ struct static_route_args {
 	const char *label;
 	const char *table;
 	const char *color;
+	const char *weight;
 
 	bool bfd;
 	bool bfd_multi_hop;
@@ -66,6 +67,28 @@ struct static_route_args {
 
 	const char *srv6_encap_behavior;
 };
+
+/* Reject invalid keywords interpreted as interface names */
+static bool staticd_ifname_invalid(const char *ifname)
+{
+	const char *const *cp;
+	static const char *const invalid_names[] = {
+		"tag",
+		"vrf",
+		"label",
+		"color",
+		"table",
+		"segments",
+		"nexthop-vrf",
+		NULL /*End sentinel*/
+	};
+
+	for (cp = invalid_names; cp != NULL && *cp != NULL; cp++)
+		if (strmatch(*cp, ifname))
+			return true;
+
+	return false;
+}
 
 static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 {
@@ -115,10 +138,17 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 	if (args->nexthop_vrf == NULL)
 		args->nexthop_vrf = args->vrf;
 
-	if (args->interface_name &&
-	    !strcasecmp(args->interface_name, "Null0")) {
-		args->flag = "Null0";
-		args->interface_name = NULL;
+	/* Interface token validation */
+	if (args->interface_name) {
+		if (strcasecmp(args->interface_name, "Null0") == 0) {
+			args->flag = "Null0";
+			args->interface_name = NULL;
+		} else if (staticd_ifname_invalid(args->interface_name)) {
+			/* Check for prohibited keywords as ifname */
+			vty_out(vty, "%% Invalid interface name %s\n",
+				args->interface_name);
+			return CMD_WARNING_CONFIG_FAILED;
+		}
 	}
 
 	assert(!!str2prefix(args->prefix, &p));
@@ -214,7 +244,7 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 					      NULL);
 		}
 
-		/* route + path procesing */
+		/* route + path processing */
 		snprintf(xpath_prefix, sizeof(xpath_prefix), FRR_STATIC_ROUTE_INFO_KEY_XPATH,
 			 "frr-staticd:staticd", "staticd", args->vrf, buf_prefix, buf_src_prefix,
 			 yang_afi_safi_value2identity(args->afi, args->safi), table_id, distance);
@@ -264,6 +294,15 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 				nb_cli_enqueue_change(vty, ab_xpath,
 						      NB_OP_MODIFY, "null");
 			}
+		}
+		if ((type == STATIC_IFNAME || type == STATIC_IPV4_GATEWAY ||
+		     type == STATIC_IPV6_GATEWAY || type == STATIC_IPV4_GATEWAY_IFNAME ||
+		     type == STATIC_IPV6_GATEWAY_IFNAME) &&
+		    args->weight) {
+			strlcpy(ab_xpath, xpath_nexthop, sizeof(ab_xpath));
+			strlcat(ab_xpath, FRR_STATIC_ROUTE_NH_WEIGHT_XPATH, sizeof(ab_xpath));
+
+			nb_cli_enqueue_change(vty, ab_xpath, NB_OP_MODIFY, args->weight);
 		}
 		if (type == STATIC_IPV4_GATEWAY_IFNAME
 		    || type == STATIC_IPV6_GATEWAY_IFNAME) {
@@ -619,6 +658,7 @@ DEFPY_YANG(ip_route_address_interface,
 	  |label WORD                                  \
 	  |table (1-4294967295)                        \
 	  |nexthop-vrf NAME                            \
+	  |weight (1-65535)                            \
 	  |onlink$onlink                               \
 	  |color (1-4294967295)                        \
 	  |bfd$bfd [{multi-hop$bfd_multi_hop|source A.B.C.D$bfd_source|profile BFDPROF$bfd_profile}] \
@@ -641,6 +681,8 @@ DEFPY_YANG(ip_route_address_interface,
       "Table to configure\n"
       "The table number to configure\n"
       VRF_CMD_HELP_STR
+      "Set weight of nexthop\n"
+      "Weight value\n"
       "Treat the nexthop as directly attached to the interface\n"
       "SR-TE color\n"
       "The SR-TE color to configure\n"
@@ -678,6 +720,7 @@ DEFPY_YANG(ip_route_address_interface,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -695,6 +738,7 @@ DEFPY_YANG(ip_route_address_interface_vrf,
 	  |label WORD                                  \
 	  |table (1-4294967295)                        \
 	  |nexthop-vrf NAME                            \
+	  |weight (1-65535)                            \
 	  |onlink$onlink                               \
 	  |color (1-4294967295)                        \
 	  |bfd$bfd [{multi-hop$bfd_multi_hop|source A.B.C.D$bfd_source|profile BFDPROF$bfd_profile}] \
@@ -716,6 +760,8 @@ DEFPY_YANG(ip_route_address_interface_vrf,
       "Table to configure\n"
       "The table number to configure\n"
       VRF_CMD_HELP_STR
+      "Set weight of nexthop\n"
+      "Weight value\n"
       "Treat the nexthop as directly attached to the interface\n"
       "SR-TE color\n"
       "The SR-TE color to configure\n"
@@ -753,6 +799,7 @@ DEFPY_YANG(ip_route_address_interface_vrf,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -770,6 +817,7 @@ DEFPY_YANG(ip_route,
 	  |label WORD                                      \
 	  |table (1-4294967295)                            \
 	  |nexthop-vrf NAME                                \
+	  |weight (1-65535)                                \
 	  |color (1-4294967295)                            \
 	  |bfd$bfd [{multi-hop$bfd_multi_hop|source A.B.C.D$bfd_source|profile BFDPROF$bfd_profile}] \
 	  |segments WORD [encap-behavior <H_Encaps|H_Encaps_Red>$encap_behavior] \
@@ -791,6 +839,8 @@ DEFPY_YANG(ip_route,
       "Table to configure\n"
       "The table number to configure\n"
       VRF_CMD_HELP_STR
+      "Set weight of nexthop\n"
+      "Weight value\n"
       "SR-TE color\n"
       "The SR-TE color to configure\n"
       BFD_INTEGRATION_STR
@@ -826,6 +876,7 @@ DEFPY_YANG(ip_route,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -842,6 +893,7 @@ DEFPY_YANG(ip_route_vrf,
 	  |label WORD                                      \
 	  |table (1-4294967295)                            \
 	  |nexthop-vrf NAME                                \
+	  |weight (1-65535)                                \
 	  |color (1-4294967295)                            \
 	  |bfd$bfd [{multi-hop$bfd_multi_hop|source A.B.C.D$bfd_source|profile BFDPROF$bfd_profile}] \
 	  |segments WORD [encap-behavior <H_Encaps|H_Encaps_Red>$encap_behavior] \
@@ -862,6 +914,8 @@ DEFPY_YANG(ip_route_vrf,
       "Table to configure\n"
       "The table number to configure\n"
       VRF_CMD_HELP_STR
+      "Set weight of nexthop\n"
+      "Weight value\n"
       "SR-TE color\n"
       "The SR-TE color to configure\n"
       BFD_INTEGRATION_STR
@@ -897,6 +951,7 @@ DEFPY_YANG(ip_route_vrf,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -1006,6 +1061,7 @@ DEFPY_YANG(ipv6_route_address_interface, ipv6_route_address_interface_cmd,
             |label WORD                                    \
 	    |table (1-4294967295)                          \
             |nexthop-vrf NAME                              \
+	    |weight (1-65535)                              \
 	    |onlink$onlink                                 \
 	    |color (1-4294967295)                          \
 	    |bfd$bfd [{multi-hop$bfd_multi_hop|source X:X::X:X$bfd_source|profile BFDPROF$bfd_profile}] \
@@ -1024,6 +1080,8 @@ DEFPY_YANG(ipv6_route_address_interface, ipv6_route_address_interface_cmd,
 	   "Distance value for this prefix\n" VRF_CMD_HELP_STR MPLS_LABEL_HELPSTR
 	   "Table to configure\n"
 	   "The table number to configure\n" VRF_CMD_HELP_STR
+	   "Set weight of nexthop\n"
+	   "Weight value\n"
 	   "Treat the nexthop as directly attached to the interface\n"
 	   "SR-TE color\n"
 	   "The SR-TE color to configure\n" BFD_INTEGRATION_STR
@@ -1057,6 +1115,7 @@ DEFPY_YANG(ipv6_route_address_interface, ipv6_route_address_interface_cmd,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -1073,6 +1132,7 @@ DEFPY_YANG(ipv6_route_address_interface_vrf,
             |label WORD                                    \
 	    |table (1-4294967295)                          \
             |nexthop-vrf NAME                              \
+	    |weight (1-65535)                              \
 	    |onlink$onlink                                 \
 	    |color (1-4294967295)                          \
 	    |bfd$bfd [{multi-hop$bfd_multi_hop|source X:X::X:X$bfd_source|profile BFDPROF$bfd_profile}] \
@@ -1091,6 +1151,8 @@ DEFPY_YANG(ipv6_route_address_interface_vrf,
 	   "Distance value for this prefix\n" MPLS_LABEL_HELPSTR
 	   "Table to configure\n"
 	   "The table number to configure\n" VRF_CMD_HELP_STR
+	   "Set weight of nexthop\n"
+	   "Weight value\n"
 	   "Treat the nexthop as directly attached to the interface\n"
 	   "SR-TE color\n"
 	   "The SR-TE color to configure\n" BFD_INTEGRATION_STR
@@ -1124,6 +1186,7 @@ DEFPY_YANG(ipv6_route_address_interface_vrf,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -1139,6 +1202,7 @@ DEFPY_YANG(ipv6_route, ipv6_route_cmd,
             |label WORD                                    \
 	    |table (1-4294967295)                          \
             |nexthop-vrf NAME                              \
+	    |weight (1-65535)                              \
             |color (1-4294967295)                          \
 	    |bfd$bfd [{multi-hop$bfd_multi_hop|source X:X::X:X$bfd_source|profile BFDPROF$bfd_profile}] \
 			|segments WORD [encap-behavior <H_Encaps|H_Encaps_Red>$encap_behavior] \
@@ -1155,7 +1219,10 @@ DEFPY_YANG(ipv6_route, ipv6_route_cmd,
 	   "Tag value\n"
 	   "Distance value for this prefix\n" VRF_CMD_HELP_STR MPLS_LABEL_HELPSTR
 	   "Table to configure\n"
-	   "The table number to configure\n" VRF_CMD_HELP_STR "SR-TE color\n"
+	   "The table number to configure\n" VRF_CMD_HELP_STR
+	   "Set weight of nexthop\n"
+	   "Weight value\n"
+	   "SR-TE color\n"
 	   "The SR-TE color to configure\n" BFD_INTEGRATION_STR
 		   BFD_INTEGRATION_MULTI_HOP_STR BFD_INTEGRATION_SOURCE_STR
 			   BFD_INTEGRATION_SOURCEV4_STR BFD_PROFILE_STR
@@ -1186,6 +1253,7 @@ DEFPY_YANG(ipv6_route, ipv6_route_cmd,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 
 	};
 
@@ -1201,6 +1269,7 @@ DEFPY_YANG(ipv6_route_vrf, ipv6_route_vrf_cmd,
             |label WORD                                    \
 	    |table (1-4294967295)                          \
             |nexthop-vrf NAME                              \
+	    |weight (1-65535)                              \
 	    |color (1-4294967295)                          \
 	    |bfd$bfd [{multi-hop$bfd_multi_hop|source X:X::X:X$bfd_source|profile BFDPROF$bfd_profile}] \
 		|segments WORD [encap-behavior <H_Encaps|H_Encaps_Red>$encap_behavior] \
@@ -1217,7 +1286,10 @@ DEFPY_YANG(ipv6_route_vrf, ipv6_route_vrf_cmd,
 	   "Tag value\n"
 	   "Distance value for this prefix\n" MPLS_LABEL_HELPSTR
 	   "Table to configure\n"
-	   "The table number to configure\n" VRF_CMD_HELP_STR "SR-TE color\n"
+	   "The table number to configure\n" VRF_CMD_HELP_STR
+	   "Set weight of nexthop\n"
+	   "Weight value\n"
+	   "SR-TE color\n"
 	   "The SR-TE color to configure\n" BFD_INTEGRATION_STR
 		   BFD_INTEGRATION_MULTI_HOP_STR BFD_INTEGRATION_SOURCE_STR
 			   BFD_INTEGRATION_SOURCEV4_STR BFD_PROFILE_STR
@@ -1248,6 +1320,7 @@ DEFPY_YANG(ipv6_route_vrf, ipv6_route_vrf_cmd,
 		.bfd_profile = bfd_profile,
 		.segs = segments,
 		.srv6_encap_behavior = encap_behavior,
+		.weight = weight_str,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -1649,6 +1722,9 @@ static void nexthop_cli_show(struct vty *vty, const struct lyd_node *route,
 	table_id = yang_dnode_get_uint32(path, "table-id");
 	if (table_id || show_defaults)
 		vty_out(vty, " table %" PRIu32, table_id);
+
+	if (yang_dnode_exists(nexthop, "weight"))
+		vty_out(vty, " weight %u", yang_dnode_get_uint16(nexthop, "weight"));
 
 	if (yang_dnode_exists(nexthop, "onlink")) {
 		onlink = yang_dnode_get_bool(nexthop, "onlink");

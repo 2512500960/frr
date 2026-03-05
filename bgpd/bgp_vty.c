@@ -1331,7 +1331,7 @@ static int bgp_clear(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t safi,
 
 	/* Clear all neighbors belonging to a specific AS. */
 	if (sort == clear_as) {
-		as_t as;
+		as_t as = 0;
 
 		if (!asn_str2asn(arg, &as)) {
 			vty_out(vty, "%% BGP: No such AS %s\n", arg);
@@ -1595,7 +1595,7 @@ DEFUN_NOSH (router_bgp,
 	int idx_asnotation_kind = 4;
 	enum asnotation_mode asnotation = ASNOTATION_UNDEFINED;
 	int ret;
-	as_t as;
+	as_t as = 0;
 	struct bgp *bgp = NULL;
 	const char *name = NULL;
 	enum bgp_instance_type inst_type;
@@ -1739,8 +1739,8 @@ DEFUN (no_router_bgp,
 {
 	int idx_asn = 3;
 	int idx_vrf = 5;
-	as_t as;
-	struct bgp *bgp;
+	as_t as = 0;
+	struct bgp *bgp = NULL;
 	const char *name = NULL;
 
 	// "no router bgp" without an ASN
@@ -2127,7 +2127,7 @@ DEFUN (bgp_confederation_identifier,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_number = 3;
-	as_t as;
+	as_t as = 0;
 
 	if (!asn_str2asn(argv[idx_number]->arg, &as)) {
 		vty_out(vty, "%% BGP: No such AS %s\n", argv[idx_number]->arg);
@@ -2164,7 +2164,7 @@ DEFUN (bgp_confederation_peers,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_asn = 3;
-	as_t as;
+	as_t as = 0;
 	int i;
 
 	for (i = idx_asn; i < argc; i++) {
@@ -2190,7 +2190,7 @@ DEFUN (no_bgp_confederation_peers,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_asn = 4;
-	as_t as;
+	as_t as = 0;
 	int i;
 
 	for (i = idx_asn; i < argc; i++) {
@@ -4258,6 +4258,32 @@ DEFUN (no_bgp_bestpath_aspath_ignore,
 	return CMD_SUCCESS;
 }
 
+/* "bgp bestpath use-imported-attributes" configuration. */
+DEFPY (bgp_bestpath_use_imported_attrs,
+       bgp_bestpath_use_imported_attrs_cmd,
+       "[no$no] bgp bestpath use-imported-attributes",
+       NO_STR
+       BGP_STR
+       "Change the default bestpath selection\n"
+       "Use imported path's attributes for bestpath comparison\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+
+	if (no) {
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS)) {
+			UNSET_FLAG(bgp->flags, BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS);
+			bgp_recalculate_all_bestpaths(bgp);
+		}
+	} else {
+		if (!CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS)) {
+			SET_FLAG(bgp->flags, BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS);
+			bgp_recalculate_all_bestpaths(bgp);
+		}
+	}
+
+	return CMD_SUCCESS;
+}
+
 /* "bgp bestpath as-path confed" configuration.  */
 DEFUN (bgp_bestpath_aspath_confed,
        bgp_bestpath_aspath_confed_cmd,
@@ -4897,6 +4923,9 @@ static void bgp_may_stop_listening(struct bgp *bgp, struct vty *vty)
 	struct vrf *vrf;
 	afi_t afi;
 
+	if (bgp->inst_type == BGP_INSTANCE_TYPE_DEFAULT)
+		return;
+
 	for (ALL_LIST_ELEMENTS(bgp->group, node, nnode, group)) {
 		for (afi = AFI_IP; afi < AFI_MAX; afi++) {
 			if (!list_isempty(group->listen_range[afi]))
@@ -5099,7 +5128,7 @@ static int peer_remote_as_vty(struct vty *vty, const char *peer_str,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int ret;
-	as_t as;
+	as_t as = 0;
 	enum peer_asn_type as_type = AS_SPECIFIED;
 	union sockunion su;
 
@@ -5369,7 +5398,7 @@ static int peer_conf_interface_get(struct vty *vty, const char *conf_if,
 
 		peer_set_last_reset(peer, PEER_DOWN_V6ONLY_CHANGE);
 
-		/* v6only flag changed. Reset bgp seesion */
+		/* v6only flag changed. Reset bgp seession */
 		if (!peer_notify_config_change(peer->connection))
 			bgp_session_reset(peer);
 	}
@@ -5389,6 +5418,9 @@ static int peer_conf_interface_get(struct vty *vty, const char *conf_if,
 
 		ret = peer_group_bind(bgp, NULL, peer, group, &as);
 	}
+
+	/* if need start listening */
+	bgp_need_listening(bgp, vty);
 
 	return bgp_vty_return(vty, ret);
 }
@@ -5702,7 +5734,7 @@ DEFUN (neighbor_local_as,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5731,7 +5763,7 @@ DEFUN (neighbor_local_as_no_prepend,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5762,7 +5794,7 @@ DEFPY (neighbor_local_as_no_prepend_replace_as,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5946,7 +5978,7 @@ DEFUN (neighbor_set_peer_group,
 	int idx_peer = 1;
 	int idx_word = 3;
 	int ret;
-	as_t as;
+	as_t as = 0;
 	union sockunion su;
 	struct peer *peer;
 	struct peer_group *group;
@@ -8757,8 +8789,20 @@ DEFPY (bgp_condadv_period,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 
-	bgp->condition_check_period =
-		no ? DEFAULT_CONDITIONAL_ROUTES_POLL_TIME : period;
+	struct listnode *node, *nnode = NULL;
+	struct peer *peer = NULL;
+
+	if (no) {
+		if (bgp->condition_check_period == DEFAULT_CONDITIONAL_ROUTES_POLL_TIME)
+			return CMD_SUCCESS;
+
+		for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer))
+			UNSET_FLAG(peer->sflags, PEER_STATUS_COND_ADV_PENDING);
+
+		bgp->condition_check_period = DEFAULT_CONDITIONAL_ROUTES_POLL_TIME;
+	} else {
+		bgp->condition_check_period = period;
+	}
 
 	return CMD_SUCCESS;
 }
@@ -9434,7 +9478,7 @@ DEFUN (neighbor_allowas_in,
 	int idx_peer = 1;
 	int idx_number_origin = 3;
 	int ret;
-	int origin = 0;
+	bool origin = false;
 	struct peer *peer;
 	int allow_num = 0;
 
@@ -9443,10 +9487,10 @@ DEFUN (neighbor_allowas_in,
 		return CMD_WARNING_CONFIG_FAILED;
 
 	if (argc <= idx_number_origin)
-		allow_num = 3;
+		allow_num = BGP_ALLOWAS_IN_DEFAULT;
 	else {
 		if (argv[idx_number_origin]->type == WORD_TKN)
-			origin = 1;
+			origin = true;
 		else
 			allow_num = atoi(argv[idx_number_origin]->arg);
 	}
@@ -11974,6 +12018,7 @@ static void print_bgp_vrfs(struct bgp *bgp, struct vty *vty, json_object *json,
 	int peers_cfg, peers_estb;
 
 	calc_peers_cfgd_estbd(bgp, &peers_cfg, &peers_estb);
+	enum global_mode gr_mode = bgp_global_gr_mode_get(bgp);
 
 	if (json) {
 		int64_t vrf_id_ui = (bgp->vrf_id == VRF_UNKNOWN)
@@ -11984,6 +12029,7 @@ static void print_bgp_vrfs(struct bgp *bgp, struct vty *vty, json_object *json,
 		json_object_int_add(json, "vrfId", vrf_id_ui);
 		json_object_string_addf(json, "routerId", "%pI4",
 					&bgp->router_id);
+		json_object_int_add(json, "as", bgp->as);
 		json_object_int_add(json, "numConfiguredPeers", peers_cfg);
 		json_object_int_add(json, "numEstablishedPeers", peers_estb);
 		json_object_int_add(json, "l3vni", bgp->l3vni);
@@ -12021,6 +12067,14 @@ static void print_bgp_vrfs(struct bgp *bgp, struct vty *vty, json_object *json,
 						bgp->gr_route_sync_pending);
 			json_object_object_add(json, "grs", json_grs);
 		}
+		json_object_int_add(json, "grRestartTime", bgp->restart_time);
+		json_object_int_add(json, "grStalePathTime", bgp->stalepath_time);
+		json_object_int_add(json, "grSelectDeferTime", bgp->select_defer_time);
+		json_object_string_add(json, "grMode", bgp_global_gr_mode_str[gr_mode]);
+		json_object_boolean_add(json, "waitForFibSet",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_SUPPRESS_FIB_PENDING));
+		json_object_boolean_add(json, "gShutEnabled",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_GRACEFUL_SHUTDOWN));
 	}
 }
 
@@ -12043,6 +12097,7 @@ static int show_bgp_vrfs_detail_common(struct vty *vty, struct bgp *bgp,
 				bgp->vrf_id == VRF_UNKNOWN ? -1
 							   : (int)bgp->vrf_id);
 			vty_out(vty, "Router Id %pI4\n", &bgp->router_id);
+			vty_out(vty, "AS number %u\n", bgp->as);
 			vty_out(vty,
 				"Num Configured Peers %d, Established %d\n",
 				peers_cfg, peers_estb);
@@ -12079,6 +12134,15 @@ static int show_bgp_vrfs_detail_common(struct vty *vty, struct bgp *bgp,
 				vty_out(vty, "Route sync with zebra %s\n",
 					bgp->gr_route_sync_pending ? "pending" : "completed");
 			}
+			vty_out(vty, "GR Restart Time Configured: %ds\n", bgp->restart_time);
+			vty_out(vty, "GR Stale Path Time Configured: %ds\n", bgp->stalepath_time);
+			vty_out(vty, "GR Select Defer Time Configured: %ds\n",
+				bgp->select_defer_time);
+			vty_out(vty, "Wait for install (FIB suppress pending) is set: %s\n",
+				CHECK_FLAG(bgp->flags, BGP_FLAG_SUPPRESS_FIB_PENDING) ? "YES"
+										      : "NO");
+			vty_out(vty, "BGP Graceful Shutdown is enabled: %s\n",
+				CHECK_FLAG(bgp->flags, BGP_FLAG_GRACEFUL_SHUTDOWN) ? "YES" : "NO");
 		}
 	} else {
 		if (json) {
@@ -12258,11 +12322,18 @@ DEFPY(show_bgp_router,
 	}
 
 	if (uj) {
+		json_object_boolean_add(json, "bgpGshutEnabled",
+					CHECK_FLAG(bm->flags, BM_FLAG_GRACEFUL_SHUTDOWN));
+	} else {
+		vty_out(vty, "BGP Graceful Shutdown is %s\n",
+			CHECK_FLAG(bm->flags, BM_FLAG_GRACEFUL_SHUTDOWN) ? "enabled" : "disabled");
+	}
+
+	if (uj) {
 		json_object_boolean_add(json, "bgpInMaintenanceMode",
 					(CHECK_FLAG(bm->flags, BM_FLAG_MAINTENANCE_MODE)));
 		json_object_int_add(json, "bgpInstanceCount", listcount(bm->bgp));
 
-		vty_json(vty, json);
 	} else {
 		if (CHECK_FLAG(bm->flags, BM_FLAG_MAINTENANCE_MODE))
 			vty_out(vty, "BGP is in Maintenance mode (BGP GSHUT is in effect)\n");
@@ -12270,6 +12341,239 @@ DEFPY(show_bgp_router,
 		vty_out(vty, "Number of BGP instances (including default): %d\n",
 			listcount(bm->bgp));
 	}
+
+	if (uj) {
+		json_object_boolean_add(json, "bgpWaitForFibSet", bm->wait_for_fib);
+	} else {
+		vty_out(vty, "BGP suppress FIB pending is %s\n",
+			bm->wait_for_fib ? "enabled" : "disabled");
+	}
+
+	if (uj) {
+		json_object_int_add(json, "bgpInputQueueLimit", bm->inq_limit);
+		json_object_int_add(json, "bgpOutputQueueLimit", bm->outq_limit);
+		json_object_int_add(json, "bgpUpdateDelayTime", bm->v_update_delay);
+		json_object_int_add(json, "bgpEstablishWaitTime", bm->v_establish_wait);
+		json_object_int_add(json, "bgpRmapDelayTimer", bm->rmap_update_timer);
+		json_object_int_add(json, "bgpRmapDelayTimerRemaining",
+				    event_timer_remain_second(bm->t_rmap_update));
+		vty_json(vty, json);
+	} else {
+		vty_out(vty, "BGP Input Queue Limit: %d\n", bm->inq_limit);
+		vty_out(vty, "BGP Output Queue Limit: %d\n", bm->outq_limit);
+
+		vty_out(vty, "BGP Global Update Delay Timers:\n");
+		vty_out(vty, "  Update Delay Time: %ds\n", bm->v_update_delay);
+		vty_out(vty, "  Establish Wait Time: %ds\n", bm->v_establish_wait);
+
+		vty_out(vty, "BGP route-map Delay Timer: %ds (remaining: %lds)\n",
+			bm->rmap_update_timer, event_timer_remain_second(bm->t_rmap_update));
+	}
+	return CMD_SUCCESS;
+}
+
+static void bgp_show_bestpath(struct vty *vty, struct bgp *bgp, json_object *json)
+{
+	bool use_json = json != NULL;
+	const char *link_bw_handling_str;
+
+	switch (bgp->lb_handling) {
+	case BGP_LINK_BW_ECMP:
+		link_bw_handling_str = "ecmp";
+		break;
+	case BGP_LINK_BW_IGNORE_BW:
+		link_bw_handling_str = "ignore";
+		break;
+	case BGP_LINK_BW_SKIP_MISSING:
+		link_bw_handling_str = "skip-missing";
+		break;
+	case BGP_LINK_BW_DEFWT_4_MISSING:
+		link_bw_handling_str = "default-weight-for-missing";
+		break;
+	default:
+		link_bw_handling_str = "ecmp";
+		break;
+	}
+
+	if (use_json) {
+		json_object *bestpath = json_object_new_object();
+
+		json_object_boolean_add(bestpath, "asPathIgnore",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE));
+
+		json_object_boolean_add(bestpath, "asPathConfed",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_CONFED));
+
+		json_object_boolean_add(bestpath, "asPathMultiPathRelax",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_MULTIPATH_RELAX));
+
+		json_object_boolean_add(bestpath, "asPathMultiPathRelaxAsSet",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_MULTIPATH_RELAX_AS_SET));
+
+		json_object_boolean_add(bestpath, "peerTypeRelax",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_PEERTYPE_MULTIPATH_RELAX));
+
+		json_object_boolean_add(bestpath, "compareRouterId",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_COMPARE_ROUTER_ID));
+
+		json_object_boolean_add(bestpath, "medConfed",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_MED_CONFED));
+
+		json_object_boolean_add(bestpath, "medMissingAsWorst",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_MED_MISSING_AS_WORST));
+
+		json_object_string_add(bestpath, "linkBwHandling", link_bw_handling_str);
+
+		json_object_boolean_add(bestpath, "alwaysCompareMed",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_ALWAYS_COMPARE_MED));
+
+		json_object_boolean_add(bestpath, "deterministicMed",
+					CHECK_FLAG(bgp->flags, BGP_FLAG_DETERMINISTIC_MED));
+
+		json_object_object_add(json, "bestPath", bestpath);
+	} else {
+		vty_out(vty, "Best Path Selection Criteria:\n");
+		vty_out(vty, "  Ignore AS path is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE) ? "Enabled" : "Disabled");
+		vty_out(vty, "  Include confederation ASNs in AS path is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_CONFED) ? "Enabled" : "Disabled");
+
+		vty_out(vty, "  AS path multi-path-relax is %s",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_MULTIPATH_RELAX) ? "Enabled"
+										: "Disabled");
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_MULTIPATH_RELAX)) {
+			if (CHECK_FLAG(bgp->flags, BGP_FLAG_MULTIPATH_RELAX_AS_SET))
+				vty_out(vty, " (aggregate ASes as AS-SET)");
+		}
+		vty_out(vty, "\n");
+
+		vty_out(vty, "  Peer type relax is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_PEERTYPE_MULTIPATH_RELAX) ? "Enabled"
+										  : "Disabled");
+
+		vty_out(vty, "  Compare router ID is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_COMPARE_ROUTER_ID) ? "Enabled"
+									   : "Disabled");
+
+		vty_out(vty, "  BGP bestpath MED confed is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_MED_CONFED) ? "Enabled" : "Disabled");
+
+		vty_out(vty, "  BGP bestpath MED missing-as-worst is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_MED_MISSING_AS_WORST) ? "Enabled"
+									      : "Disabled");
+
+		vty_out(vty, "  Link Bandwidth handling set to: %s\n", link_bw_handling_str);
+
+		vty_out(vty, "  Always compare MED is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_ALWAYS_COMPARE_MED) ? "Enabled"
+									    : "Disabled");
+		vty_out(vty, "  Deterministic MED is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_DETERMINISTIC_MED) ? "Enabled"
+									   : "Disabled");
+	}
+}
+
+DEFPY(show_bgp_vrf_bestpath, show_bgp_vrf_bestpath_cmd,
+      "show bgp [<view|vrf> VIEWVRFNAME$vrf_name] bestpath [json]",
+      SHOW_STR
+      BGP_STR
+      BGP_INSTANCE_HELP_STR
+      "Display the best path selection criteria\n"
+      JSON_STR)
+{
+	struct bgp *bgp = NULL;
+	struct listnode *node = NULL;
+	struct list *inst = bm->bgp;
+	json_object *json = NULL;
+	json_object *json_instance = NULL;
+	bool uj = use_json(argc, argv);
+	const char *name = vrf_name;
+	bool show_all_vrfs = false;
+	bool show_all_views = false;
+	int idx_vrf_view = 0;
+	const char *inst_name;
+	const char *type_str;
+
+	if (uj)
+		json = json_object_new_object();
+
+	/* Determine if 'vrf all' or 'view all' was specified */
+	if (name && strmatch(name, "all")) {
+		if (argv_find(argv, argc, "vrf", &idx_vrf_view))
+			show_all_vrfs = true;
+		else if (argv_find(argv, argc, "view", &idx_vrf_view))
+			show_all_views = true;
+	}
+
+	/* Handle specific VRF/VIEW case */
+	if (name && !show_all_vrfs && !show_all_views) {
+		bgp = strmatch(name, VRF_DEFAULT_NAME)
+			      ? bgp_get_default()
+			      : bgp_lookup_by_name(name);
+
+		if (!bgp) {
+			if (uj)
+				vty_json(vty, json);
+			else
+				vty_out(vty, "%% Specified BGP instance not found\n");
+			return CMD_WARNING;
+		}
+
+		/* Output single VRF/VIEW info */
+		if (uj) {
+			json_instance = json_object_new_object();
+			bgp_show_bestpath(vty, bgp, json_instance);
+			json_object_object_add(json, name, json_instance);
+			vty_json(vty, json);
+		} else {
+			type_str = (bgp->inst_type == BGP_INSTANCE_TYPE_VIEW) ? "View" : "VRF";
+			vty_out(vty, "%s %s\n", type_str, name);
+			bgp_show_bestpath(vty, bgp, NULL);
+		}
+		return CMD_SUCCESS;
+	}
+
+	/* Handle all VRFs and/or VIEWs case */
+	for (ALL_LIST_ELEMENTS_RO(inst, node, bgp)) {
+
+		switch (bgp->inst_type) {
+		case BGP_INSTANCE_TYPE_DEFAULT:
+			inst_name = VRF_DEFAULT_NAME;
+			type_str = "VRF";
+			/* Skip if showing views only */
+			if (show_all_views)
+				continue;
+			break;
+		case BGP_INSTANCE_TYPE_VRF:
+			inst_name = bgp->name;
+			type_str = "VRF";
+			/* Skip if showing views only */
+			if (show_all_views)
+				continue;
+			break;
+		case BGP_INSTANCE_TYPE_VIEW:
+			inst_name = bgp->name;
+			type_str = "View";
+			/* Skip if showing vrfs only */
+			if (show_all_vrfs)
+				continue;
+			break;
+		default:
+			continue;
+		}
+
+		if (uj) {
+			json_instance = json_object_new_object();
+			bgp_show_bestpath(vty, bgp, json_instance);
+			json_object_object_add(json, inst_name, json_instance);
+		} else {
+			vty_out(vty, "%s %s\n", type_str, inst_name);
+			bgp_show_bestpath(vty, bgp, NULL);
+		}
+	}
+
+	if (uj)
+		vty_json(vty, json);
 
 	return CMD_SUCCESS;
 }
@@ -12334,6 +12638,114 @@ DEFUN(show_bgp_martian_nexthop_db, show_bgp_martian_nexthop_db_cmd,
 		return CMD_WARNING;
 	}
 	bgp_show_martian_nexthops(vty, bgp);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(show_bgp_redistribute,
+      show_bgp_redistribute_cmd,
+      "show bgp <view|vrf> VIEWVRFNAME <ipv4|ipv6> unicast redistribute [json]",
+      SHOW_STR
+      BGP_STR
+      BGP_INSTANCE_HELP_STR
+      BGP_AF_STR
+      BGP_AF_STR
+      BGP_AF_MODIFIER_STR
+      "Detailed information on redistribute\n"
+      JSON_STR)
+{
+	afi_t afi = AFI_IP6;
+	safi_t safi = SAFI_UNICAST;
+	struct bgp *bgp = NULL;
+	bool uj = use_json(argc, argv);
+	int idx = 0, i = 0;
+	json_object *json_redistribute = NULL;
+	json_object *json_re = NULL;
+	json_object *json = NULL;
+
+	if (uj)
+		argc--;
+
+	bgp_vty_find_and_parse_afi_safi_bgp(vty, argv, argc, &idx, &afi, &safi, &bgp, uj);
+
+	if (!idx)
+		return CMD_WARNING;
+
+	if (!bgp)
+		return CMD_WARNING;
+
+	if (!(afi == AFI_IP || afi == AFI_IP6)) {
+		if (uj)
+			vty_json_empty(vty, NULL);
+		else
+			vty_out(vty, "%% Only ipv4 or ipv6 address families are supported\n");
+		return CMD_WARNING;
+	}
+
+	if (safi != SAFI_UNICAST) {
+		if (uj)
+			vty_json_empty(vty, NULL);
+		else
+			vty_out(vty, "%% Only ipv4 unicast or ipv6 unicast are supported\n");
+		return CMD_WARNING;
+	}
+
+	if (uj) {
+		json = json_object_new_object();
+		json_re = json_object_new_object();
+	}
+
+	for (i = 0; i < ZEBRA_ROUTE_MAX; i++) {
+		struct list *red_list;
+		struct listnode *node;
+		struct bgp_redist *red;
+		json_object *json_route_array = NULL;
+
+		/* Redistribute BGP does not make sense.  */
+		if (i == ZEBRA_ROUTE_BGP)
+			continue;
+
+		red_list = bgp->redist[afi][i];
+		if (!red_list)
+			continue;
+
+		if (uj)
+			json_route_array = json_object_new_array();
+
+		for (ALL_LIST_ELEMENTS_RO(red_list, node, red)) {
+			if (uj) {
+				json_redistribute = json_object_new_object();
+				if (red->instance)
+					json_object_int_add(json_redistribute, "instance",
+							    red->instance);
+				if (red->redist_metric_flag)
+					json_object_int_add(json_redistribute, "metric",
+							    red->redist_metric);
+				if (red->rmap.name)
+					json_object_string_add(json_redistribute, "routeMap",
+							       red->rmap.name);
+
+				json_object_array_add(json_route_array, json_redistribute);
+			} else {
+				vty_out(vty, "  redistribute %s", zebra_route_string(i));
+				if (red->instance)
+					vty_out(vty, " %d", red->instance);
+				if (red->redist_metric_flag)
+					vty_out(vty, " metric %u", red->redist_metric);
+				if (red->rmap.name)
+					vty_out(vty, " route-map %s", red->rmap.name);
+				vty_out(vty, "\n");
+			}
+		}
+
+		if (uj && json_route_array)
+			json_object_object_add(json_re, zebra_route_string(i), json_route_array);
+	}
+
+	if (uj) {
+		json_object_object_add(json, "redistribute", json_re);
+		vty_json(vty, json);
+	}
 
 	return CMD_SUCCESS;
 }
@@ -12725,7 +13137,7 @@ static bool bgp_show_summary_is_peer_filtered(struct peer *peer,
  * or not.
  *
  * When adding new columns to `show bgp summary` output, please make
- * sure `Desc` is the lastest column to show because it can contain
+ * sure `Desc` is the latest column to show because it can contain
  * whitespaces and the whole output will be tricky.
  */
 static int bgp_show_summary(struct vty *vty, struct bgp *bgp, int afi, int safi,
@@ -13407,7 +13819,7 @@ static int bgp_show_summary(struct vty *vty, struct bgp *bgp, int afi, int safi,
 
 					vty_out(vty, " %8u", 0);
 				}
-				/* Make sure `Desc` column is the lastest in
+				/* Make sure `Desc` column is the latest in
 				 * the output.
 				 * If the description is not set, try
 				 * to print the software version if the
@@ -13501,7 +13913,7 @@ static void bgp_show_summary_afi_safi(struct vty *vty, struct bgp *bgp, int afi,
 					/*
 					 * So limit output to those afi/safi
 					 * pairs that
-					 * actualy have something interesting in
+					 * actually have something interesting in
 					 * them
 					 */
 					if (use_json) {
@@ -14298,25 +14710,41 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_MED_UNCHANGED))
 			json_object_boolean_true_add(
 				json_addr, "unchangedMedPropogatedToNbr");
-		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_COMMUNITY)
-		    || CHECK_FLAG(p->af_flags[afi][safi],
-				  PEER_FLAG_SEND_EXT_COMMUNITY)) {
-			if (CHECK_FLAG(p->af_flags[afi][safi],
-				       PEER_FLAG_SEND_COMMUNITY)
-			    && CHECK_FLAG(p->af_flags[afi][safi],
-					  PEER_FLAG_SEND_EXT_COMMUNITY))
-				json_object_string_add(json_addr,
-						       "commAttriSentToNbr",
-						       "extendedAndStandard");
-			else if (CHECK_FLAG(p->af_flags[afi][safi],
-					    PEER_FLAG_SEND_EXT_COMMUNITY))
-				json_object_string_add(json_addr,
-						       "commAttriSentToNbr",
-						       "extended");
-			else
-				json_object_string_add(json_addr,
-						       "commAttriSentToNbr",
-						       "standard");
+		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_COMMUNITY) ||
+		    CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_LARGE_COMMUNITY) ||
+		    CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_EXT_COMMUNITY)) {
+			char comm_attri_sent_to_nbr[BGP_SEND_COMMUNITY_STR_SIZE] = { 0 };
+
+			if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_COMMUNITY)) {
+				strncat(comm_attri_sent_to_nbr, "standard",
+					sizeof(comm_attri_sent_to_nbr) -
+						strlen(comm_attri_sent_to_nbr) - 1);
+			}
+
+			if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_EXT_COMMUNITY)) {
+				if (strlen(comm_attri_sent_to_nbr) > 0) {
+					strncat(comm_attri_sent_to_nbr, "And",
+						sizeof(comm_attri_sent_to_nbr) -
+							strlen(comm_attri_sent_to_nbr) - 1);
+				}
+				strncat(comm_attri_sent_to_nbr, "extended",
+					sizeof(comm_attri_sent_to_nbr) -
+						strlen(comm_attri_sent_to_nbr) - 1);
+			}
+
+			if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_SEND_LARGE_COMMUNITY)) {
+				if (strlen(comm_attri_sent_to_nbr) > 0) {
+					strncat(comm_attri_sent_to_nbr, "And",
+						sizeof(comm_attri_sent_to_nbr) -
+							strlen(comm_attri_sent_to_nbr) - 1);
+				}
+				strncat(comm_attri_sent_to_nbr, "large",
+					sizeof(comm_attri_sent_to_nbr) -
+						strlen(comm_attri_sent_to_nbr) - 1);
+			}
+
+			json_object_string_add(json_addr, "commAttriSentToNbr",
+					       comm_attri_sent_to_nbr);
 		}
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_DEFAULT_ORIGINATE)) {
@@ -14441,6 +14869,9 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 		if (paf && PAF_SUBGRP(paf))
 			json_object_int_add(json_addr, "sentPrefixCounter",
 						(PAF_SUBGRP(paf))->scount);
+
+		json_object_int_add(json_addr, "receivedPrefixDup",
+				    p->pcount_dup[afi][pfx_rcd_safi]);
 
 		/* Maximum prefix */
 		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_MAX_PREFIX_OUT))
@@ -14739,10 +15170,12 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 		/* Receive and sent prefix count, if available */
 		paf = peer_af_find(p, afi, safi);
 		if (paf && PAF_SUBGRP(paf))
-			vty_out(vty, "  %u accepted, %u sent prefixes\n",
-				p->pcount[afi][pfx_rcd_safi], PAF_SUBGRP(paf)->scount);
+			vty_out(vty, "  %u accepted, %u sent prefixes, %u received duplicates\n",
+				p->pcount[afi][pfx_rcd_safi], PAF_SUBGRP(paf)->scount,
+				p->pcount_dup[afi][pfx_rcd_safi]);
 		else
-			vty_out(vty, "  %u accepted prefixes\n", p->pcount[afi][pfx_rcd_safi]);
+			vty_out(vty, "  %u accepted prefixes, %u received duplicates\n",
+				p->pcount[afi][pfx_rcd_safi], p->pcount_dup[afi][pfx_rcd_safi]);
 
 		/* maximum-prefix-out */
 		if (CHECK_FLAG(p->af_flags[afi][safi],
@@ -17761,6 +18194,7 @@ static int bgp_show_one_peer_group(struct vty *vty, struct peer_group *group,
 	json_object *json_peer_group_dynamic = NULL;
 	json_object *json_peer_group_dynamic_af = NULL;
 	json_object *json_peer_group_ranges = NULL;
+	uint16_t member_count = 0;
 
 	conf = group->conf;
 
@@ -17934,10 +18368,14 @@ static int bgp_show_one_peer_group(struct vty *vty, struct peer_group *group,
 					dynamic ? "(dynamic)" : "",
 					peer_status);
 			}
+			member_count++;
 		}
-		if (json)
-			json_object_object_add(json_peer_group, "members",
-					       json_peer_group_members);
+	}
+
+	if (json) {
+		json_object_int_add(json_peer_group, "memberCount", member_count);
+		if (member_count)
+			json_object_object_add(json_peer_group, "members", json_peer_group_members);
 	}
 
 	if (json)
@@ -19922,7 +20360,7 @@ static void bgp_config_write_peer_af(struct vty *vty, struct bgp *bgp,
 		if (peer_af_flag_check(peer, afi, safi,
 				       PEER_FLAG_ALLOWAS_IN_ORIGIN)) {
 			vty_out(vty, "  neighbor %s allowas-in origin\n", addr);
-		} else if (peer->allowas_in[afi][safi] == 3) {
+		} else if (peer->allowas_in[afi][safi] == BGP_ALLOWAS_IN_DEFAULT) {
 			vty_out(vty, "  neighbor %s allowas-in\n", addr);
 		} else {
 			vty_out(vty, "  neighbor %s allowas-in %d\n", addr,
@@ -20536,6 +20974,8 @@ int bgp_config_write(struct vty *vty)
 
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_COMPARE_ROUTER_ID))
 			vty_out(vty, " bgp bestpath compare-routerid\n");
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS))
+			vty_out(vty, " bgp bestpath use-imported-attributes\n");
 
 		if (!!CHECK_FLAG(bgp->flags, BGP_FLAG_COMPARE_AIGP) != SAVE_BGP_COMPARE_AIGP)
 			vty_out(vty, " %sbgp bestpath aigp\n",
@@ -21430,6 +21870,9 @@ void bgp_vty_init(void)
 	/* "bgp bestpath as-path ignore" commands */
 	install_element(BGP_NODE, &bgp_bestpath_aspath_ignore_cmd);
 	install_element(BGP_NODE, &no_bgp_bestpath_aspath_ignore_cmd);
+
+	/* "bgp bestpath use-imported-attributes" commands */
+	install_element(BGP_NODE, &bgp_bestpath_use_imported_attrs_cmd);
 
 	/* "bgp bestpath as-path confed" commands */
 	install_element(BGP_NODE, &bgp_bestpath_aspath_confed_cmd);
@@ -22706,6 +23149,9 @@ void bgp_vty_init(void)
 	install_element(BGP_IPV6_NODE, &bgp_redistribute_ipv6_table_cmd);
 	install_element(BGP_IPV6_NODE, &no_bgp_redistribute_ipv6_table_cmd);
 
+	/* redistribute show commands */
+	install_element(VIEW_NODE, &show_bgp_redistribute_cmd);
+
 	/* import|export vpn [route-map RMAP_NAME] */
 	install_element(BGP_IPV4_NODE, &bgp_imexport_vpn_cmd);
 	install_element(BGP_IPV6_NODE, &bgp_imexport_vpn_cmd);
@@ -22737,6 +23183,9 @@ void bgp_vty_init(void)
 
 	/* Some overall BGP information */
 	install_element(VIEW_NODE, &show_bgp_router_cmd);
+
+	/* "show bgp vrfs bestpath" command. */
+	install_element(VIEW_NODE, &show_bgp_vrf_bestpath_cmd);
 
 	/* Community-list. */
 	community_list_vty();

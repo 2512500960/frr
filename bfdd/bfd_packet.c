@@ -457,7 +457,7 @@ void ptm_bfd_snd(struct bfd_session *bfd, int fbit)
 		/*
 		 * We can only announce current setting on poll, this
 		 * avoids timing mismatch with our peer and give it
-		 * the oportunity to learn. See `bs_final_handler` for
+		 * the opportunity to learn. See `bs_final_handler` for
 		 * more information.
 		 */
 		cp.timers.desired_min_tx =
@@ -839,13 +839,13 @@ static bool bfd_check_auth(const struct bfd_session *bfd,
 		case BFD_AUTH_NULL:
 			return false;
 		case BFD_AUTH_SIMPLE:
-			/* RFC5880 6.7: To be finshed. */
+			/* RFC5880 6.7: To be finished. */
 			return false;
 		case BFD_AUTH_CRYPTOGRAPHIC:
-			/* RFC5880 6.7: To be finshed. */
+			/* RFC5880 6.7: To be finished. */
 			return false;
 		default:
-			/* RFC5880 6.7: To be finshed. */
+			/* RFC5880 6.7: To be finished. */
 			return false;
 		}
 	}
@@ -1126,7 +1126,7 @@ void bfd_recv_cb(struct event *t)
 	/*
 	 * Detection timeout calculation:
 	 * The minimum detection timeout is the remote detection
-	 * multipler (number of packets to be missed) times the agreed
+	 * multiplier (number of packets to be missed) times the agreed
 	 * transmission interval.
 	 *
 	 * RFC 5880, Section 6.8.4.
@@ -1160,7 +1160,7 @@ void bfd_recv_cb(struct event *t)
 }
 
 /*
- * bp_bfd_echo_in: proccesses an BFD echo packet. On TTL == BFD_TTL_VAL
+ * bp_bfd_echo_in: processes an BFD echo packet. On TTL == BFD_TTL_VAL
  * the packet is looped back or returns the my discriminator ID along
  * with the TTL.
  *
@@ -1790,8 +1790,10 @@ int bp_echo_socket(const struct vrf *vrf)
 			       vrf->name);
 	}
 
-	if (s == -1)
+	if (s == -1) {
 		zlog_err("echo-socket: socket: %s", strerror(errno));
+		return -1;
+	}
 
 	struct sock_fprog pf;
 	struct sockaddr_ll sll = {0};
@@ -1828,8 +1830,10 @@ int bp_echo_socket(const struct vrf *vrf)
 	frr_with_privs(&bglobal.bfdd_privs) {
 		s = vrf_socket(AF_INET, SOCK_DGRAM, 0, vrf->vrf_id, vrf->name);
 	}
-	if (s == -1)
+	if (s == -1) {
 		zlog_err("echo-socket: socket: %s", strerror(errno));
+		return -1;
+	}
 
 	bp_set_ipopts(s);
 	bp_bind_ip(s, BFD_DEF_ECHO_PORT);
@@ -2046,7 +2050,7 @@ void ptm_sbfd_initiator_snd(struct bfd_session *bfd, int fbit)
 		/*
 		 * We can only announce current setting on poll, this
 		 * avoids timing mismatch with our peer and give it
-		 * the oportunity to learn. See `bs_final_handler` for
+		 * the opportunity to learn. See `bs_final_handler` for
 		 * more information.
 		 */
 		cp.timers.desired_min_tx = htonl(bfd->cur_timers.desired_min_tx);

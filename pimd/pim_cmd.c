@@ -410,9 +410,9 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 				igmp->querier_query_interval,
 				pim_ifp->gm_query_max_response_time_dsec);
 
-			lmqt_msec = PIM_IGMP_LMQT_MSEC(
-				pim_ifp->gm_specific_query_max_response_time_dsec,
-				pim_ifp->gm_last_member_query_count);
+			lmqt_msec =
+				PIM_IGMP_LMQT_MSEC(pim_ifp->gm_specific_query_max_response_time_dsec,
+						   if_gm_last_member_query_count(pim_ifp));
 
 			ohpi_msec =
 				PIM_IGMP_OHPI_DSEC(
@@ -422,7 +422,7 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 				100;
 
 			qri_msec = pim_ifp->gm_query_max_response_time_dsec * 100L;
-			lmqc = pim_ifp->gm_last_member_query_count;
+			lmqc = if_gm_last_member_query_count(pim_ifp);
 
 			if (uj) {
 				json_row = json_object_new_object();
@@ -5621,6 +5621,29 @@ DEFUN_YANG_HIDDEN (interface_no_ip_igmp_query_max_response_time_dsec,
 				    "frr-routing:ipv4");
 }
 
+DEFPY_YANG(interface_ip_igmp_robustness,
+           interface_ip_igmp_robustness_cmd,
+           "ip igmp robustness (1-255)$robustness",
+           IP_STR
+           IFACE_IGMP_STR
+           "Querier's Robustness Variable\n"
+           "Querier's Robustness Variable\n")
+{
+	return gm_process_robustness_cmd(vty, robustness_str);
+}
+
+DEFPY_YANG(interface_no_ip_igmp_robustness,
+           interface_no_ip_igmp_robustness_cmd,
+           "no ip igmp robustness [(1-255)]",
+           NO_STR
+           IP_STR
+           IFACE_IGMP_STR
+           "Querier's Robustness Variable\n"
+           "Querier's Robustness Variable\n")
+{
+	return gm_process_no_robustness_cmd(vty);
+}
+
 DEFPY (interface_ip_igmp_last_member_query_count,
        interface_ip_igmp_last_member_query_count_cmd,
        "ip igmp last-member-query-count (1-255)$lmqc",
@@ -6106,6 +6129,23 @@ DEFPY_YANG(interface_ip_pim_assert_override, interface_ip_pim_assert_override_cm
 		nb_cli_enqueue_change(vty, "./assert-override-interval", NB_OP_DESTROY, NULL);
 	else
 		nb_cli_enqueue_change(vty, "./assert-override-interval", NB_OP_MODIFY, ao_str);
+
+	return nb_cli_apply_changes(vty, FRR_PIM_INTERFACE_XPATH, FRR_PIM_AF_XPATH_VAL);
+}
+
+DEFPY_YANG(interface_ip_pim_override_interval,
+           interface_ip_pim_override_interval_cmd,
+           "[no] ip pim override-interval ![(0-65535)$oi]",
+           NO_STR
+           IP_STR
+           "pim multicast routing\n"
+           "LAN prune delay override interval\n"
+           "Milliseconds, default 2500\n")
+{
+	if (no)
+		nb_cli_enqueue_change(vty, "./override-interval", NB_OP_DESTROY, NULL);
+	else
+		nb_cli_enqueue_change(vty, "./override-interval", NB_OP_MODIFY, oi_str);
 
 	return nb_cli_apply_changes(vty, FRR_PIM_INTERFACE_XPATH, FRR_PIM_AF_XPATH_VAL);
 }
@@ -9217,6 +9257,24 @@ DEFPY_YANG(pim_rpf_lookup_mode, pim_rpf_lookup_mode_cmd,
 				    (grp_list ? grp_list : ""), (src_list ? src_list : ""));
 }
 
+DEFPY_YANG(pim_join_filter_route_map, pim_join_filter_route_map_cmd,
+	   "[no] join-filter route-map ![RMAP_NAME]$rmap",
+	   NO_STR
+	   "PIM join filter configuration\n"
+	   "Filter PIM joins via route-map\n"
+	   "Route-map name\n")
+{
+	char xpath[XPATH_MAXLEN];
+
+	snprintf(xpath, sizeof(xpath), "./pim-join-route-map");
+	if (no)
+		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
+	else
+		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, rmap);
+
+	return nb_cli_apply_changes(vty, NULL);
+}
+
 struct cmd_node pim_node = {
 	.name = "pim",
 	.node = PIM_NODE,
@@ -9386,6 +9444,7 @@ void pim_cmd_init(void)
 	install_element(PIM_NODE, &pim_dm_prefix_list_cmd);
 
 	install_element(PIM_NODE, &pim_rpf_lookup_mode_cmd);
+	install_element(PIM_NODE, &pim_join_filter_route_map_cmd);
 
 	install_element(INTERFACE_NODE, &interface_ip_igmp_cmd);
 	install_element(INTERFACE_NODE, &interface_no_ip_igmp_cmd);
@@ -9405,6 +9464,8 @@ void pim_cmd_init(void)
 			&interface_ip_igmp_query_max_response_time_dsec_cmd);
 	install_element(INTERFACE_NODE,
 			&interface_no_ip_igmp_query_max_response_time_dsec_cmd);
+	install_element(INTERFACE_NODE, &interface_ip_igmp_robustness_cmd);
+	install_element(INTERFACE_NODE, &interface_no_ip_igmp_robustness_cmd);
 	install_element(INTERFACE_NODE,
 			&interface_ip_igmp_last_member_query_count_cmd);
 	install_element(INTERFACE_NODE,
@@ -9436,6 +9497,7 @@ void pim_cmd_init(void)
 	install_element(INTERFACE_NODE, &interface_no_ip_pim_neighbor_prefix_list_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_pim_assert_interval_cmd);
 	install_element(INTERFACE_NODE, &interface_ip_pim_assert_override_cmd);
+	install_element(INTERFACE_NODE, &interface_ip_pim_override_interval_cmd);
 
 	// Static mroutes NEB
 	install_element(INTERFACE_NODE, &interface_ip_mroute_cmd);

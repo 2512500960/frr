@@ -69,7 +69,7 @@ MACRO_REQUIRE_SEMICOLON()
  * information is not injected into PIM interface state.
 
  * The function pim_if_membership_refresh() fetches all IGMPv3 local
- * membership information into PIM. It is intented to be called
+ * membership information into PIM. It is intended to be called
  * whenever PIM is enabled on the interface in order to collect missed
  * local membership information.
  */
@@ -2013,6 +2013,51 @@ int routing_control_plane_protocols_control_plane_protocol_pim_address_family_re
 }
 
 /*
+ * XPath: /frr-routing:routing/control-plane-protocols/control-plane-protocol/frr-pim:pim/address-family/pim-join-route-map
+ */
+int pim_join_route_map_modify(struct nb_cb_modify_args *args)
+{
+	struct vrf *vrf;
+	struct pim_instance *pim;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_PREPARE:
+	case NB_EV_ABORT:
+		break;
+
+	case NB_EV_APPLY:
+		vrf = nb_running_get_entry(args->dnode, NULL, true);
+		pim = vrf->info;
+		pim_filter_ref_set_rmap(&pim->join_filter,
+					yang_dnode_get_string(args->dnode, NULL));
+		break;
+	}
+
+	return NB_OK;
+}
+
+int pim_join_route_map_detroy(struct nb_cb_destroy_args *args)
+{
+	struct vrf *vrf;
+	struct pim_instance *pim;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_PREPARE:
+	case NB_EV_ABORT:
+		break;
+	case NB_EV_APPLY:
+		vrf = nb_running_get_entry(args->dnode, NULL, true);
+		pim = vrf->info;
+		pim_filter_ref_set_rmap(&pim->join_filter, NULL);
+		break;
+	}
+
+	return NB_OK;
+}
+
+/*
  * XPath: /frr-routing:routing/control-plane-protocols/control-plane-protocol/frr-pim:pim/address-family/mcast-rpf-lookup
  */
 int routing_control_plane_protocols_control_plane_protocol_pim_address_family_mcast_rpf_lookup_create(
@@ -2454,6 +2499,46 @@ int lib_interface_pim_assert_override_interval_destroy(struct nb_cb_destroy_args
 		ifp = nb_running_get_entry(args->dnode, NULL, true);
 		pim_ifp = ifp->info;
 		pim_ifp->assert_override_msec = -1;
+		break;
+	}
+
+	return NB_OK;
+}
+
+int lib_interface_pim_override_interval_modify(struct nb_cb_modify_args *args)
+{
+	struct interface *ifp;
+	struct pim_interface *pim_ifp;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_ABORT:
+	case NB_EV_PREPARE:
+		break;
+	case NB_EV_APPLY:
+		ifp = nb_running_get_entry(args->dnode, NULL, true);
+		pim_ifp = ifp->info;
+		pim_ifp->pim_override_interval_msec = yang_dnode_get_uint16(args->dnode, NULL);
+		break;
+	}
+
+	return NB_OK;
+}
+
+int lib_interface_pim_override_interval_destroy(struct nb_cb_destroy_args *args)
+{
+	struct interface *ifp;
+	struct pim_interface *pim_ifp;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_ABORT:
+	case NB_EV_PREPARE:
+		break;
+	case NB_EV_APPLY:
+		ifp = nb_running_get_entry(args->dnode, NULL, true);
+		pim_ifp = ifp->info;
+		pim_ifp->pim_override_interval_msec = PIM_DEFAULT_OVERRIDE_INTERVAL_MSEC;
 		break;
 	}
 
@@ -4746,14 +4831,12 @@ int lib_interface_gm_max_sources_modify(struct nb_cb_modify_args *args)
 }
 
 /*
- * XPath: /frr-interface:lib/interface/frr-gmp:gmp/address-family/robustness-variable
+ * XPath: /frr-interface:lib/interface/frr-gmp:gmp/address-family/last-member-query-count
  */
-int lib_interface_gmp_address_family_robustness_variable_modify(
-	struct nb_cb_modify_args *args)
+int lib_interface_gmp_address_family_last_member_query_count_modify(struct nb_cb_modify_args *args)
 {
 	struct interface *ifp;
 	struct pim_interface *pim_ifp;
-	int last_member_query_count;
 
 	switch (args->event) {
 	case NB_EV_VALIDATE:
@@ -4763,10 +4846,69 @@ int lib_interface_gmp_address_family_robustness_variable_modify(
 	case NB_EV_APPLY:
 		ifp = nb_running_get_entry(args->dnode, NULL, true);
 		pim_ifp = ifp->info;
-		last_member_query_count =
-			yang_dnode_get_uint8(args->dnode, NULL);
-		pim_ifp->gm_last_member_query_count = last_member_query_count;
+		pim_ifp->gm_last_member_query_count = yang_dnode_get_uint8(args->dnode, NULL);
 #if PIM_IPV == 6
+		gm_ifp_update(ifp);
+#endif
+		break;
+	}
+
+	return NB_OK;
+}
+
+int lib_interface_gmp_address_family_last_member_query_count_destroy(struct nb_cb_destroy_args *args)
+{
+	struct interface *ifp;
+	struct pim_interface *pim_ifp;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_PREPARE:
+	case NB_EV_ABORT:
+		break;
+	case NB_EV_APPLY:
+		ifp = nb_running_get_entry(args->dnode, NULL, true);
+		pim_ifp = ifp->info;
+		pim_ifp->gm_last_member_query_count = 0;
+#if PIM_IPV == 6
+		gm_ifp_update(ifp);
+#endif
+		break;
+	}
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-interface:lib/interface/frr-gmp:gmp/address-family/robustness-variable
+ */
+int lib_interface_gmp_address_family_robustness_variable_modify(struct nb_cb_modify_args *args)
+{
+	struct interface *ifp;
+	struct pim_interface *pim_ifp;
+
+	switch (args->event) {
+	case NB_EV_VALIDATE:
+	case NB_EV_PREPARE:
+	case NB_EV_ABORT:
+		break;
+	case NB_EV_APPLY:
+		ifp = nb_running_get_entry(args->dnode, NULL, true);
+		pim_ifp = ifp->info;
+		pim_ifp->gm_default_robustness_variable = yang_dnode_get_uint8(args->dnode, NULL);
+
+#if PIM_IPV == 4
+		struct listnode *node;
+		struct gm_sock *igmp;
+
+		/* Update all addresses that are acting as querier */
+		for (ALL_LIST_ELEMENTS_RO(pim_ifp->gm_socket_list, node, igmp)) {
+			if (igmp->t_other_querier_timer)
+				continue;
+
+			igmp->querier_robustness_variable = pim_ifp->gm_default_robustness_variable;
+		}
+#else
 		gm_ifp_update(ifp);
 #endif
 		break;

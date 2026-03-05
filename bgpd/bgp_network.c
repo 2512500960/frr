@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* BGP network related fucntions
+/* BGP network related functions
  * Copyright (C) 1999 Kunihiro Ishiguro
  */
 
@@ -513,6 +513,10 @@ static void bgp_accept(struct event *event)
 
 		if (dynamic_peer) {
 			incoming = dynamic_peer->connection;
+
+			atomic_store_explicit(&incoming->last_sendq_ok, monotime(NULL),
+					      memory_order_relaxed);
+
 			/* Dynamic neighbor has been created, let it proceed */
 			incoming->fd = bgp_sock;
 
@@ -587,7 +591,7 @@ static void bgp_accept(struct event *event)
 
 	/*
 	 * Do not accept incoming connections in Clearing state. This can result
-	 * in incorect state transitions - e.g., the connection goes back to
+	 * in incorrect state transitions - e.g., the connection goes back to
 	 * Established and then the Clearing_Completed event is generated. Also,
 	 * block incoming connection in Deleted state.
 	 */
@@ -672,6 +676,7 @@ static void bgp_accept(struct event *event)
 	incoming->fd = bgp_sock;
 	incoming->su_local = sockunion_getsockname(incoming->fd);
 	incoming->su_remote = sockunion_dup(&su);
+	atomic_store_explicit(&incoming->last_sendq_ok, monotime(NULL), memory_order_relaxed);
 
 	if (bgp_set_socket_ttl(incoming) < 0)
 		if (bgp_debug_neighbor_events(doppelganger))
@@ -812,6 +817,8 @@ enum connect_result bgp_connect(struct peer_connection *connection)
 
 	assert(!CHECK_FLAG(connection->thread_flags, PEER_THREAD_WRITES_ON));
 	assert(!CHECK_FLAG(connection->thread_flags, PEER_THREAD_READS_ON));
+
+	atomic_store_explicit(&connection->last_sendq_ok, monotime(NULL), memory_order_relaxed);
 
 	if (peer->bgp->router_id.s_addr == INADDR_ANY) {
 		peer_set_last_reset(peer, PEER_DOWN_ROUTER_ID_ZERO);

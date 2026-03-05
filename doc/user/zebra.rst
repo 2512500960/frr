@@ -156,6 +156,12 @@ Standard Commands
 
 .. clicmd:: interface IFNAME vrf VRF
 
+   Configure interface in a specific VRF. Depending on the VRF backend,
+   specifying the VRF explicitly is optional. In those cases, interface VRF
+   information will also be omitted from ``show running-config`` even when
+   it was given when configuring the interface. In any case, specifying a
+   VRF does not configure the VRF used by the kernel interface. It merely
+   helps identifying the right kernel interface.
 
 .. clicmd:: shutdown
    :daemon: zebra
@@ -514,7 +520,9 @@ The easiest way to pass the same option to all daemons is to use the
 
 Configuring VRF networking contexts can be done in various ways on FRR. The VRF
 interfaces can be configured by entering in interface configuration mode
-:clicmd:`interface IFNAME vrf VRF`.
+:clicmd:`interface IFNAME vrf VRF`. Note that FRR neither creates VRFs nor
+configures the VRF an interface belongs to. FRR simply uses whatever is
+provided by the OS.
 
 A VRF backend mode is chosen when running *Zebra*.
 
@@ -531,7 +539,7 @@ to find the next route table to use to look for a route match.  As such if
 your VRF table does not have a default blackhole route with a high metric
 VRF route lookup will leave the table specified by the VRF, which is undesirable.
 
-If the :option:`-n` option is chosen, then the *Linux network namespace* will
+If the :option:`-w` option is chosen, then the *Linux network namespace* will
 be mapped over the *Zebra* VRF. That implies that *Zebra* is able to configure
 several *Linux network namespaces*.  The routing table associated to that VRF
 is the whole routing tables located in that namespace. For instance, this mode
@@ -556,12 +564,12 @@ commands in relationship to VRF. Here is an extract of some of those commands:
    *Zebra* is launched with default settings, this will be the ``TABLENO`` of
    the VRF configured on the kernel, thanks to information provided in
    https://www.kernel.org/doc/Documentation/networking/vrf.txt. If *Zebra* is
-   launched with :option:`-n` option, this will be the default routing table of
+   launched with :option:`-w` option, this will be the default routing table of
    the *Linux network namespace* ``VRF``.
 
 .. clicmd:: show ip route vrf VRF table TABLENO
 
-   The show command is only available with :option:`-n` option. This command
+   The show command is only available with :option:`-w` option. This command
    will dump the routing table ``TABLENO`` of the *Linux network namespace*
    ``VRF``.
 
@@ -1595,7 +1603,7 @@ zebra Terminal Mode Commands
    Display detailed information about a route. If [nexthop-group] is
    included, it will display the nexthop group ID the route is using as well.
 
-.. clicmd:: show [ip|ipv6] route [vrf NAME|all|table TABLENO] [A.B.C.D|A.B.C.D/M|X:X::X:X|X:X::X:X/M] [json] [nexthop-group [summary [ecmp-count <gt|lt|eq> (1-256)]]]
+.. clicmd:: show [ip|ipv6] route [vrf NAME|all|table TABLENO] [A.B.C.D|A.B.C.D/M|X:X::X:X|X:X::X:X/M] [nexthop-group [summary [ecmp-count <gt|lt|eq> (1-256)]]] [failed] [json]
 
    Display detailed information about routes in the routing table. This command provides comprehensive information about specific routes, including their attributes, nexthops, and other routing details.
 
@@ -1611,6 +1619,7 @@ zebra Terminal Mode Commands
      - ``gt``: Show routes with ECMP count greater than N
      - ``lt``: Show routes with ECMP count less than N
      - ``eq``: Show routes with ECMP count equal to N
+   - ``failed``: Show only routes that failed to install in the FIB (kernel). This is useful for troubleshooting route installation issues.
    - ``json``: Display output in JSON format
 
    The detailed output includes:
@@ -1706,6 +1715,24 @@ zebra Terminal Mode Commands
    - Monitoring ECMP load-balancing configurations
    - Verifying routes have the expected number of paths
 
+   **Viewing Failed Routes**
+
+   The ``failed`` option filters the output to show only routes that have failed
+   to install in the FIB. This is useful for troubleshooting route installation
+   issues.
+
+   ::
+
+      Router# show ip route failed
+      Codes: K - kernel route, C - connected, L - local, S - static,
+             R - RIP, O - OSPF, I - IS-IS, B - BGP, E - EIGRP, N - NHRP,
+             T - Table, v - VNC, V - VNC-Direct, A - Babel, F - PBR,
+             f - OpenFabric, t - Table-Direct,
+             > - selected route, * - FIB route, q - queued, r - rejected, b - backup
+             t - trapped, o - offload failure
+
+      r>* 0.0.0.0/0 [20/0] via 10.0.0.1, Ethernet120, rejected
+
 .. clicmd:: show [ip|ipv6] route summary
 
    Display summary information about routes received from each protocol.
@@ -1744,9 +1771,17 @@ zebra Terminal Mode Commands
 
    Display whether the host's IP v6 forwarding is enabled or not.
 
-.. clicmd:: show ip neigh
+.. clicmd:: show ip neighbor [json]
 
    Display the ip neighbor table
+
+.. clicmd:: show ipv6 neighbor [json]
+
+   Display the ipv6 neighbor table
+
+.. clicmd:: show neighbor [json]
+
+   Display the v4 and v6 neighbor table.
 
 .. clicmd:: show pbr rule
 

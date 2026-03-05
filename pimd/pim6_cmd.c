@@ -226,6 +226,23 @@ DEFPY_YANG(if_ipv6_pim_assert_override_interval,
 	return nb_cli_apply_changes(vty, FRR_PIM_INTERFACE_XPATH, FRR_PIM_AF_XPATH_VAL);
 }
 
+DEFPY_YANG(if_ipv6_pim_override_interval,
+           if_ipv6_pim_override_interval_cmd,
+           "[no] ipv6 pim override-interval ![(0-65535)$oi]",
+           NO_STR
+           IPV6_STR
+           PIM_STR
+           "LAN prune delay override interval\n"
+           "Milliseconds, default 2500\n")
+{
+	if (no)
+		nb_cli_enqueue_change(vty, "./override-interval", NB_OP_DESTROY, NULL);
+	else
+		nb_cli_enqueue_change(vty, "./override-interval", NB_OP_MODIFY, oi_str);
+
+	return nb_cli_apply_changes(vty, FRR_PIM_INTERFACE_XPATH, FRR_PIM_AF_XPATH_VAL);
+}
+
 DEFPY (pim6_spt_switchover_infinity,
        pim6_spt_switchover_infinity_cmd,
        "spt-switchover infinity-and-beyond",
@@ -1818,6 +1835,29 @@ DEFPY (interface_no_ipv6_mld_query_max_response_time,
 	return gm_process_no_query_max_response_time_cmd(vty);
 }
 
+DEFPY_YANG(interface_ipv6_mld_robustness,
+           interface_ipv6_mld_robustness_cmd,
+           "ipv6 mld robustness (1-255)$robustness",
+           IPV6_STR
+           IFACE_MLD_STR
+           "Querier's Robustness Variable\n"
+           "Querier's Robustness Variable\n")
+{
+	return gm_process_robustness_cmd(vty, robustness_str);
+}
+
+DEFPY_YANG(interface_no_ipv6_mld_robustness,
+           interface_no_ipv6_mld_robustness_cmd,
+           "no ipv6 mld robustness [(1-255)]",
+           NO_STR
+           IPV6_STR
+           IFACE_MLD_STR
+           "Querier's Robustness Variable\n"
+           "Querier's Robustness Variable\n")
+{
+	return gm_process_no_robustness_cmd(vty);
+}
+
 DEFPY (interface_ipv6_mld_last_member_query_count,
        interface_ipv6_mld_last_member_query_count_cmd,
        "ipv6 mld last-member-query-count (1-255)$lmqc",
@@ -3010,6 +3050,24 @@ DEFPY (debug_pimv6_bsm,
 	return CMD_SUCCESS;
 }
 
+DEFPY_YANG(pim6_join_filter_route_map, pim6_join_filter_route_map_cmd,
+	   "[no] join-filter route-map ![RMAP_NAME]$rmap",
+	   NO_STR
+	   "PIM join filter configuration\n"
+	   "Filter PIM joins via route-map\n"
+	   "Route-map name\n")
+{
+	char xpath[XPATH_MAXLEN];
+
+	snprintf(xpath, sizeof(xpath), "./pim-join-route-map");
+	if (no)
+		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
+	else
+		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, rmap);
+
+	return nb_cli_apply_changes(vty, NULL);
+}
+
 struct cmd_node pim6_node = {
 	.name = "pim6",
 	.node = PIM6_NODE,
@@ -3092,6 +3150,8 @@ void pim_cmd_init(void)
 	install_element(PIM6_NODE, &pim6_bsr_candidate_rp_group_cmd);
 	install_element(PIM6_NODE, &pim6_bsr_candidate_bsr_cmd);
 
+	install_element(PIM6_NODE, &pim6_join_filter_route_map_cmd);
+
 	install_element(CONFIG_NODE, &ipv6_mld_group_watermark_cmd);
 	install_element(VRF_NODE, &ipv6_mld_group_watermark_cmd);
 	install_element(CONFIG_NODE, &no_ipv6_mld_group_watermark_cmd);
@@ -3113,6 +3173,7 @@ void pim_cmd_init(void)
 	install_element(INTERFACE_NODE, &no_interface_ipv6_mld_limits_cmd);
 	install_element(INTERFACE_NODE, &if_ipv6_pim_assert_interval_cmd);
 	install_element(INTERFACE_NODE, &if_ipv6_pim_assert_override_interval_cmd);
+	install_element(INTERFACE_NODE, &if_ipv6_pim_override_interval_cmd);
 
 	install_element(INTERFACE_NODE, &interface_ipv6_pim_use_source_cmd);
 
@@ -3139,6 +3200,8 @@ void pim_cmd_init(void)
 			&interface_ipv6_mld_query_max_response_time_cmd);
 	install_element(INTERFACE_NODE,
 			&interface_no_ipv6_mld_query_max_response_time_cmd);
+	install_element(INTERFACE_NODE, &interface_ipv6_mld_robustness_cmd);
+	install_element(INTERFACE_NODE, &interface_no_ipv6_mld_robustness_cmd);
 	install_element(INTERFACE_NODE,
 			&interface_ipv6_mld_last_member_query_count_cmd);
 	install_element(INTERFACE_NODE,

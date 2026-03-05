@@ -25,6 +25,12 @@ sys.path.append(os.path.join(CWD, "../"))
 # pylint: disable=C0413
 # Import topogen and topotest helpers
 from lib import topotest
+from lib.evpn import (
+    evpn_check_vni_macs_present,
+    evpn_mac_learn_test,
+    evpn_mac_test_local_remote,
+    evpn_show_vni_json_elide_ifindex,
+)
 from lib.topogen import Topogen, TopoRouter, get_topogen
 from lib.topolog import logger
 
@@ -167,25 +173,6 @@ def teardown_module(mod):
     tgen.stop_topology()
 
 
-def show_vni_json_elide_ifindex(pe, vni, expected):
-    output_json = pe.vtysh_cmd("show evpn vni {} json".format(vni), isjson=True)
-    if "ifindex" in output_json:
-        output_json.pop("ifindex")
-
-    return topotest.json_cmp(output_json, expected)
-
-
-def check_vni_macs_present(tgen, router, vni, maclist):
-    result = router.vtysh_cmd("show evpn mac vni {} json".format(vni), isjson=True)
-    for rname, ifname in maclist:
-        m = tgen.net.macs[(rname, ifname)]
-        if m not in result["macs"]:
-            return "MAC ({}) for interface {} on {} missing on {} from {}".format(
-                m, ifname, rname, router.name, json.dumps(result, indent=4)
-            )
-    return None
-
-
 def test_pe1_converge_evpn():
     "Wait for protocol convergence"
 
@@ -198,7 +185,7 @@ def test_pe1_converge_evpn():
     json_file = "{}/{}/evpn.vni.json".format(CWD, pe1.name)
     expected = json.loads(open(json_file).read())
 
-    test_func = partial(show_vni_json_elide_ifindex, pe1, 101, expected)
+    test_func = partial(evpn_show_vni_json_elide_ifindex, pe1, 101, expected)
     _, result = topotest.run_and_expect(test_func, None, count=45, wait=1)
     assertmsg = '"{}" JSON output mismatches'.format(pe1.name)
 
@@ -212,7 +199,7 @@ def test_pe1_converge_evpn():
     host2.run("ping -c 1 10.10.1.55")
 
     test_func = partial(
-        check_vni_macs_present,
+        evpn_check_vni_macs_present,
         tgen,
         pe1,
         101,
@@ -237,13 +224,13 @@ def test_pe2_converge_evpn():
     json_file = "{}/{}/evpn.vni.json".format(CWD, pe2.name)
     expected = json.loads(open(json_file).read())
 
-    test_func = partial(show_vni_json_elide_ifindex, pe2, 101, expected)
+    test_func = partial(evpn_show_vni_json_elide_ifindex, pe2, 101, expected)
     _, result = topotest.run_and_expect(test_func, None, count=45, wait=1)
     assertmsg = '"{}" JSON output mismatches'.format(pe2.name)
     assert result is None, assertmsg
 
     test_func = partial(
-        check_vni_macs_present,
+        evpn_check_vni_macs_present,
         tgen,
         pe2,
         101,
@@ -253,47 +240,6 @@ def test_pe2_converge_evpn():
     if result:
         logger.warning("%s", result)
         assert None, '"{}" missing expected MACs'.format(pe2.name)
-
-
-def mac_learn_test(host, local):
-    "check the host MAC gets learned by the VNI"
-
-    host_output = host.vtysh_cmd("show interface {}-eth0".format(host.name))
-    int_lines = host_output.splitlines()
-    for line in int_lines:
-        line_items = line.split(": ")
-        if "HWaddr" in line_items[0]:
-            mac = line_items[1]
-            break
-
-    mac_output = local.vtysh_cmd("show evpn mac vni 101 mac {} json".format(mac))
-    mac_output_json = json.loads(mac_output)
-    assertmsg = "Local MAC output does not match interface mac {}".format(mac)
-    assert mac_output_json[mac]["type"] == "local", assertmsg
-
-
-def mac_test_local_remote(local, remote):
-    "test MAC transfer between local and remote"
-
-    local_output = local.vtysh_cmd("show evpn mac vni all json")
-    remote_output = remote.vtysh_cmd("show evpn mac vni all json")
-    local_output_vni = local.vtysh_cmd("show evpn vni detail json")
-    local_output_json = json.loads(local_output)
-    remote_output_json = json.loads(remote_output)
-    local_output_vni_json = json.loads(local_output_vni)
-
-    for vni in local_output_json:
-        mac_list = local_output_json[vni]["macs"]
-        for mac in mac_list:
-            if mac_list[mac]["type"] == "local" and mac_list[mac]["intf"] != "br101":
-                assertmsg = "JSON output mismatches local: {} remote: {}".format(
-                    local_output_vni_json[0]["vtepIp"],
-                    remote_output_json[vni]["macs"][mac]["remoteVtep"],
-                )
-                assert (
-                    remote_output_json[vni]["macs"][mac]["remoteVtep"]
-                    == local_output_vni_json[0]["vtepIp"]
-                ), assertmsg
 
 
 def test_learning_pe1():
@@ -306,7 +252,7 @@ def test_learning_pe1():
 
     host1 = tgen.gears["host1"]
     pe1 = tgen.gears["PE1"]
-    mac_learn_test(host1, pe1)
+    evpn_mac_learn_test(host1, pe1)
 
 
 def test_learning_pe2():
@@ -319,7 +265,7 @@ def test_learning_pe2():
 
     host2 = tgen.gears["host2"]
     pe2 = tgen.gears["PE2"]
-    mac_learn_test(host2, pe2)
+    evpn_mac_learn_test(host2, pe2)
 
 
 def test_local_remote_mac_pe1():
@@ -332,7 +278,7 @@ def test_local_remote_mac_pe1():
 
     pe1 = tgen.gears["PE1"]
     pe2 = tgen.gears["PE2"]
-    mac_test_local_remote(pe1, pe2)
+    evpn_mac_test_local_remote(pe1, pe2)
 
 
 def test_local_remote_mac_pe2():
@@ -345,7 +291,7 @@ def test_local_remote_mac_pe2():
 
     pe1 = tgen.gears["PE1"]
     pe2 = tgen.gears["PE2"]
-    mac_test_local_remote(pe2, pe1)
+    evpn_mac_test_local_remote(pe2, pe1)
 
     # Memory leak test template
 
@@ -421,6 +367,28 @@ def ip_learn_test(tgen, host, local, remote, ip_addr):
         ip_addr, learned_ip
     )
     assert ip_addr == learned_ip, assertmsg
+
+
+def _ip_neigh_has_entry(router, dev, ip_addr, require_extern=True):
+    output = router.cmd("ip neigh show dev {}".format(dev))
+    for line in output.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == ip_addr:
+            if require_extern and "extern_learn" not in line:
+                return False
+            return True
+    return False
+
+
+def _ip_neigh_missing(router, dev, ip_addr):
+    output = router.cmd("ip neigh show dev {}".format(dev))
+    for line in output.splitlines():
+        parts = line.split()
+        if parts and parts[0] == ip_addr:
+            return False
+    return True
 
 
 def test_ip_pe1_learn():
@@ -619,6 +587,32 @@ def test_evpn_l3vni_vlan_bridge():
 
         assertmsg = "L3 VNI 999 (PE2): text output should contain 'Type: L3'"
         assert "Type: L3" in output, assertmsg
+
+
+def test_remote_neigh_uninstall_on_vxlan_down():
+    "Ensure remote neighs are removed when VxLAN if is down"
+    tgen = get_topogen()
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    host1 = tgen.gears["host1"]
+    pe1 = tgen.gears["PE1"]
+
+    # Trigger ARP/neighbor learning for the remote host
+    host1.run("ping -c1 10.10.1.56")
+
+    test_func = partial(_ip_neigh_has_entry, pe1, "br101", "10.10.1.56", True)
+    _, result = topotest.run_and_expect(test_func, True, count=20, wait=3)
+    assertmsg = "PE1 missing extern_learn neighbor 10.10.1.56 on br101"
+    assert result, assertmsg
+
+    # Remove VxLAN device to trigger L2VNI cleanup
+    pe1.run("ip link del vxlan101")
+
+    test_func = partial(_ip_neigh_missing, pe1, "br101", "10.10.1.56")
+    _, result = topotest.run_and_expect(test_func, True, count=20, wait=3)
+    assertmsg = "PE1 still has neighbor 10.10.1.56 after VxLAN down"
+    assert result, assertmsg
 
 
 def test_memory_leak():

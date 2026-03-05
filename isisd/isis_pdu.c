@@ -146,7 +146,7 @@ static int process_p2p_hello(struct iih_info *iih)
 	}
 
 	/*
-	 * My interpertation of the ISO, if no adj exists we will create one for
+	 * My interpretation of the ISO, if no adj exists we will create one for
 	 * the circuit
 	 */
 	struct isis_adjacency *adj = iih->circuit->u.p2p.neighbor;
@@ -1001,7 +1001,7 @@ static int process_lsp(uint8_t pdu_type, struct isis_circuit *circuit,
 
 	struct isis_tlvs *tlvs = NULL;
 	int retval = ISIS_WARNING;
-	const char *error_log;
+	const char *error_log = NULL;
 
 	if (isis_unpack_tlvs(STREAM_READABLE(circuit->rcv_stream),
 			     circuit->rcv_stream, &tlvs, &error_log)) {
@@ -1033,7 +1033,7 @@ static int process_lsp(uint8_t pdu_type, struct isis_circuit *circuit,
 
 	/* 7.3.15.1 a) 4 - need to make sure IDLength matches */
 
-	/* 7.3.15.1 a) 5 - maximum area match, can be ommited since we only use
+	/* 7.3.15.1 a) 5 - maximum area match, can be omitted since we only use
 	 * 3 */
 
 	/* 7.3.15.1 a) 7 - password check */
@@ -1453,7 +1453,7 @@ static int process_snp(uint8_t pdu_type, struct isis_circuit *circuit,
 	/* 7.3.15.2 a) 5 - need to make sure IDLength matches - already checked
 	 */
 
-	/* 7.3.15.2 a) 6 - maximum area match, can be ommited since we only use
+	/* 7.3.15.2 a) 6 - maximum area match, can be omitted since we only use
 	 * 3
 	 * - already checked */
 
@@ -1883,8 +1883,8 @@ int isis_handle_pdu(struct isis_circuit *circuit, uint8_t *ssnpa)
 
 void isis_receive(struct event *event)
 {
-	struct isis_circuit *circuit;
-	uint8_t ssnpa[ETH_ALEN];
+	struct isis_circuit *circuit = NULL;
+	uint8_t ssnpa[ETH_ALEN] = { 0 };
 
 	/*
 	 * Get the circuit

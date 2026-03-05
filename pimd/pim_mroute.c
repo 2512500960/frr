@@ -406,6 +406,7 @@ int pim_mroute_msg_nocache(int fd, struct interface *ifp, const kernmsg *msg)
 	 * install routes as needed for all cases (sm/dm)
 	 */
 	pim_upstream_inherited_olist_decide(pim_ifp->pim, up);
+	pim_upstream_update_join_desired(pim_ifp->pim, up);
 
 	/* we just got NOCACHE from the kernel, so...  MFC is not in the
 	 * kernel for some reason or another.  Try installing again.
@@ -436,30 +437,53 @@ int pim_mroute_msg_wholepkt(int fd, struct interface *ifp, const char *buf,
 	up = pim_upstream_find(pim_ifp->pim, &sg);
 	if (!up) {
 		pim_sgaddr star = sg;
+
 		star.src = PIMADDR_ANY;
 
 		up = pim_upstream_find(pim_ifp->pim, &star);
 
 		if (up && PIM_UPSTREAM_FLAG_TEST_CAN_BE_LHR(up->flags)) {
-			up = pim_upstream_add(pim_ifp->pim, &sg, ifp,
-					      PIM_UPSTREAM_FLAG_MASK_SRC_LHR,
-					      __func__, NULL);
-			if (!up) {
+			struct connected *src_conn = NULL;
+			struct pim_interface *src_pim_ifp = NULL;
+
+			/*
+			 * Now let's test to see if this also can be
+			 * a FHR as well, As that this is a possibility
+			 * and if it is we must treat it as such.
+			 */
+			src_conn = if_lookup_address(&sg.src, PIM_AF, pim_ifp->pim->vrf->vrf_id);
+
+			if (src_conn && src_conn->ifp->info)
+				src_pim_ifp = src_conn->ifp->info;
+
+			if (src_conn != NULL && src_pim_ifp && src_pim_ifp->pim_enable) {
+				up = pim_upstream_add(pim_ifp->pim, &sg, src_conn->ifp,
+						      PIM_UPSTREAM_FLAG_MASK_FHR, __func__, NULL);
+				PIM_UPSTREAM_FLAG_SET_SRC_STREAM(up->flags);
+				pim_upstream_keep_alive_timer_start(up,
+								    pim_ifp->pim->keep_alive_time);
+				pim_upstream_inherited_olist(pim_ifp->pim, up);
+				pim_upstream_update_join_desired(pim_ifp->pim, up);
+				if (!pim_is_group_filtered(pim_ifp, &sg.grp, &sg.src))
+					pim_register_join(up);
 				if (PIM_DEBUG_MROUTE)
-					zlog_debug(
-						"%s: Unable to create upstream information for %pSG",
-						__func__, &sg);
+					zlog_debug("%s: Treat WHOLEPKT on pimreg as FHR for %pSG",
+						   __func__, &sg);
+				goto have_up;
+			} else {
+				up = pim_upstream_add(pim_ifp->pim, &sg, ifp,
+						      PIM_UPSTREAM_FLAG_MASK_SRC_LHR, __func__,
+						      NULL);
+				pim_upstream_keep_alive_timer_start(up,
+								    pim_ifp->pim->keep_alive_time);
+				pim_upstream_inherited_olist(pim_ifp->pim, up);
+				pim_upstream_update_join_desired(pim_ifp->pim, up);
+
+				if (PIM_DEBUG_MROUTE)
+					zlog_debug("%s: Creating %s upstream on LHR", __func__,
+						   up->sg_str);
 				return 0;
 			}
-			pim_upstream_keep_alive_timer_start(
-				up, pim_ifp->pim->keep_alive_time);
-			pim_upstream_inherited_olist(pim_ifp->pim, up);
-			pim_upstream_update_join_desired(pim_ifp->pim, up);
-
-			if (PIM_DEBUG_MROUTE)
-				zlog_debug("%s: Creating %s upstream on LHR",
-					   __func__, up->sg_str);
-			return 0;
 		}
 		if (PIM_DEBUG_MROUTE_DETAIL) {
 			zlog_debug(
@@ -468,6 +492,8 @@ int pim_mroute_msg_wholepkt(int fd, struct interface *ifp, const char *buf,
 		}
 		return 0;
 	}
+
+have_up:
 
 	if (!up->rpf.source_nexthop.interface) {
 		if (PIM_DEBUG_PIM_TRACE)
@@ -517,7 +543,7 @@ int pim_mroute_msg_wholepkt(int fd, struct interface *ifp, const char *buf,
 
 int pim_mroute_msg_wrongvif(int fd, struct interface *ifp, const kernmsg *msg)
 {
-	struct pim_ifchannel *ch;
+	struct pim_ifchannel *ch, *throwaway;
 	struct pim_interface *pim_ifp;
 	pim_sgaddr sg;
 
@@ -553,7 +579,7 @@ int pim_mroute_msg_wrongvif(int fd, struct interface *ifp, const kernmsg *msg)
 		return -2;
 	}
 
-	ch = pim_ifchannel_find(ifp, &sg);
+	pim_ifchannel_find(ifp, &sg, &ch, &throwaway);
 	if (!ch) {
 		pim_sgaddr star_g = sg;
 		if (PIM_DEBUG_MROUTE)
@@ -562,7 +588,7 @@ int pim_mroute_msg_wrongvif(int fd, struct interface *ifp, const kernmsg *msg)
 				__func__, &sg, ifp->name);
 
 		star_g.src = PIMADDR_ANY;
-		ch = pim_ifchannel_find(ifp, &star_g);
+		pim_ifchannel_find(ifp, &star_g, &ch, &throwaway);
 		if (!ch) {
 			if (PIM_DEBUG_MROUTE)
 				zlog_debug(
@@ -630,7 +656,7 @@ int pim_mroute_msg_wrvifwhole(int fd, struct interface *ifp, const char *buf,
 	const ipv_hdr *ip_hdr = (const ipv_hdr *)buf;
 	struct pim_interface *pim_ifp;
 	struct pim_instance *pim;
-	struct pim_ifchannel *ch;
+	struct pim_ifchannel *ch, *throwaway;
 	struct pim_upstream *up;
 	pim_sgaddr star_g;
 	pim_sgaddr sg;
@@ -659,7 +685,7 @@ int pim_mroute_msg_wrvifwhole(int fd, struct interface *ifp, const char *buf,
 		return 0;
 	}
 
-	ch = pim_ifchannel_find(ifp, &sg);
+	pim_ifchannel_find(ifp, &sg, &ch, &throwaway);
 	if (ch) {
 		if (PIM_DEBUG_MROUTE)
 			zlog_debug(
@@ -1170,7 +1196,7 @@ int pim_mroute_del_vif(struct interface *ifp)
  *
  * This is a protection against implementation mistakes.
  *
- * PIM protocol implicitely ensures loopfree multicast topology.
+ * PIM protocol implicitly ensures loopfree multicast topology.
  *
  * IGMP must be protected against adding looped MFC entries created
  * by both source and receiver attached to the same interface. See
@@ -1258,7 +1284,7 @@ static int pim_mroute_add(struct channel_oil *c_oil, const char *name)
 	 * it is owned by the pimreg for the incoming IIF
 	 * So set pimreg as the IIF temporarily to cause
 	 * the packets to be forwarded.  Then set it
-	 * to the correct IIF afterwords.
+	 * to the correct IIF afterwards.
 	 */
 	if (!c_oil->installed && !pim_addr_is_any(*oil_origin(c_oil)) &&
 	    *oil_incoming_vif(c_oil) != 0) {

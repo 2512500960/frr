@@ -66,6 +66,7 @@ DEFINE_MTYPE_STATIC(ZEBRA, WQ_WRAPPER, "WQ wrapper");
 static pthread_mutex_t dplane_mutex;
 static struct event *t_dplane;
 static struct dplane_ctx_list_head rib_dplane_q;
+static _Atomic uint32_t rib_dplane_q_max;
 
 DEFINE_HOOK(rib_update, (struct route_node * rn, const char *reason),
 	    (rn, reason));
@@ -238,8 +239,7 @@ struct wq_label_wrapper {
 	int afi;
 };
 
-static void rib_addnode(struct route_node *rn, struct route_entry *re,
-			int process);
+static void rib_addnode(struct route_node *rn, struct route_entry *re);
 
 /* %pRN is already a printer for route_nodes that just prints the prefix */
 #ifdef _FRR_ATTRIBUTE_PRINTFRR
@@ -444,8 +444,10 @@ int zebra_check_addr(const struct prefix *p)
 
 		addr = ntohl(p->u.prefix4.s_addr);
 
-		if (IPV4_NET127(addr) || IN_CLASSD(addr) ||
-		    (IPV4_LINKLOCAL(addr) && !IPV4_CLASS_E(addr)))
+		if ((IPV4_NET127(addr) || IN_CLASSD(addr)) && !cmd_allow_reserved_ranges_get())
+			return 0;
+
+		if (IPV4_LINKLOCAL(addr) && !IPV4_CLASS_E(addr))
 			return 0;
 	}
 	if (p->family == AF_INET6) {
@@ -1623,8 +1625,8 @@ static void zebra_rib_fixup_system(struct route_node *rn)
 }
 
 /* Route comparison logic, with various special cases. */
-static bool rib_compare_routes(const struct route_entry *re1,
-			       const struct route_entry *re2)
+static bool rib_compare_routes(const struct route_entry *re1, const struct route_entry *re2,
+			       bool replace)
 {
 	if (re1->type != re2->type)
 		return false;
@@ -1632,8 +1634,13 @@ static bool rib_compare_routes(const struct route_entry *re1,
 	if (re1->instance != re2->instance)
 		return false;
 
-	if (re1->type == ZEBRA_ROUTE_KERNEL && re1->metric != re2->metric)
-		return false;
+	if (re1->type == ZEBRA_ROUTE_KERNEL) {
+		if (re1->metric != re2->metric)
+			return false;
+
+		if (!replace)
+			return false;
+	}
 
 	if (CHECK_FLAG(re1->flags, ZEBRA_FLAG_RR_USE_DISTANCE) &&
 	    re1->distance != re2->distance)
@@ -1643,7 +1650,7 @@ static bool rib_compare_routes(const struct route_entry *re1,
 	 * v6 link-locals, and we also support multiple addresses in the same
 	 * subnet on a single interface.
 	 */
-	if (re1->type == ZEBRA_ROUTE_CONNECT &&
+	if ((re1->type == ZEBRA_ROUTE_CONNECT || re1->type == ZEBRA_ROUTE_LOCAL) &&
 	    (re1->nhe->nhg.nexthop->ifindex == re2->nhe->nhg.nexthop->ifindex))
 		return true;
 
@@ -2467,6 +2474,7 @@ struct zebra_early_route {
 	bool startup;
 	bool deletion;
 	bool fromkernel;
+	bool replace;
 };
 
 static void early_route_memory_free(struct zebra_early_route *ere)
@@ -2595,7 +2603,7 @@ static void process_subq_early_route_add(struct zebra_early_route *ere)
 		}
 
 		/* Compare various route_entry properties */
-		if (rib_compare_routes(re, same)) {
+		if (rib_compare_routes(re, same, ere->replace)) {
 			same_count++;
 
 			if (first_same == NULL)
@@ -2682,7 +2690,7 @@ static void process_subq_early_route_add(struct zebra_early_route *ere)
 	}
 
 	SET_FLAG(re->status, ROUTE_ENTRY_CHANGED);
-	rib_addnode(rn, re, 1);
+	rib_addnode(rn, re);
 
 	dest = rib_dest_from_rnode(rn);
 	/* Free implicit route.*/
@@ -2915,9 +2923,7 @@ static void process_subq_early_route_delete(struct zebra_early_route *ere)
 			early_route_memory_free(ere);
 			return;
 		}
-	}
-
-	if (same) {
+	} else {
 		struct nexthop *tmp_nh;
 
 		if (ere->fromkernel &&
@@ -3224,13 +3230,29 @@ static int rib_meta_queue_nhg_process(struct meta_queue *mq, void *data,
 {
 	struct nhg_hash_entry *nhe = NULL;
 	uint8_t qindex = META_QUEUE_NHG;
-	struct wq_nhg_wrapper *w;
+	struct wq_nhg_wrapper *w, *ow;
+	struct listnode *node, *nnode;
 	uint64_t curr, high;
 
 	nhe = (struct nhg_hash_entry *)data;
 
 	if (!nhe)
 		return -1;
+
+	/* For NHG wrapper type, replace any existing queue entry with the
+	 * same nh id: keep the current NHE and remove the old one.
+	 */
+	for (ALL_LIST_ELEMENTS(mq->subq[qindex], node, nnode, ow)) {
+		if (ow->type == WQ_NHG_WRAPPER_TYPE_NHG && ow->u.nhe->id == nhe->id) {
+			list_delete_node(mq->subq[qindex], node);
+			mq->size--;
+			atomic_fetch_sub_explicit(&mq->total_metaq, 1, memory_order_relaxed);
+			atomic_fetch_sub_explicit(&mq->total_subq[qindex], 1, memory_order_relaxed);
+			zebra_nhg_free(ow->u.nhe);
+			XFREE(MTYPE_WQ_WRAPPER, ow);
+			break;
+		}
+	}
 
 	w = XCALLOC(MTYPE_WQ_WRAPPER, sizeof(struct wq_nhg_wrapper));
 
@@ -3855,7 +3877,7 @@ rib_dest_t *zebra_rib_create_dest(struct route_node *rn)
  */
 
 /* Add RE to head of the route node. */
-static void rib_link(struct route_node *rn, struct route_entry *re, int process)
+static void rib_link(struct route_node *rn, struct route_entry *re)
 {
 	rib_dest_t *dest;
 	afi_t afi;
@@ -3886,12 +3908,10 @@ static void rib_link(struct route_node *rn, struct route_entry *re, int process)
 		}
 	}
 
-	if (process)
-		rib_queue_add(rn);
+	rib_queue_add(rn);
 }
 
-static void rib_addnode(struct route_node *rn,
-			struct route_entry *re, int process)
+static void rib_addnode(struct route_node *rn, struct route_entry *re)
 {
 	/* RE node has been un-removed before route-node is processed.
 	 * route_node must hence already be on the queue for processing..
@@ -3904,7 +3924,7 @@ static void rib_addnode(struct route_node *rn,
 		UNSET_FLAG(re->status, ROUTE_ENTRY_REMOVED);
 		return;
 	}
-	rib_link(rn, re, process);
+	rib_link(rn, re);
 }
 
 /*
@@ -4155,15 +4175,17 @@ static int rib_meta_queue_early_route_add(struct meta_queue *mq, void *data)
 	if (IS_ZEBRA_DEBUG_RIB_DETAILED) {
 		struct vrf *vrf = vrf_lookup_by_id(ere->re->vrf_id);
 
-		zlog_debug("Route %pFX(%s) (%s) queued for processing into sub-queue %s mq size %u",
-			   &ere->p, VRF_LOGNAME(vrf), ere->deletion ? "delete" : "add",
-			   subqueue2str(META_QUEUE_EARLY_ROUTE), zrouter.mq->size);
+		zlog_debug("Route %pFX(%s:%s) (%s) queued for processing into sub-queue %s mq size %u",
+			   &ere->p, VRF_LOGNAME(vrf), safi2str(ere->safi),
+			   ere->deletion ? "delete" : "add", subqueue2str(META_QUEUE_EARLY_ROUTE),
+			   zrouter.mq->size);
 	}
 
 	return 0;
 }
 
-void rib_meta_queue_early_route_cleanup(const struct prefix *p, int route_type)
+void rib_meta_queue_early_route_cleanup(const struct prefix *p, afi_t afi, safi_t safi,
+					vrf_id_t vrf_id, int route_type)
 {
 	struct listnode *node, *nnode;
 	struct zebra_early_route *ere;
@@ -4171,7 +4193,8 @@ void rib_meta_queue_early_route_cleanup(const struct prefix *p, int route_type)
 	/* Iterate through the early route subqueue */
 	for (ALL_LIST_ELEMENTS(zrouter.mq->subq[META_QUEUE_EARLY_ROUTE], node, nnode, ere)) {
 		/* Check if this entry matches the prefix and route type */
-		if (prefix_same(&ere->p, p) && ere->re->type == route_type) {
+		if (prefix_same(&ere->p, p) && ere->re->type == route_type && ere->afi == afi &&
+		    ere->safi == safi && ere->re->vrf_id == vrf_id) {
 			/* Remove from the list */
 			list_delete_node(zrouter.mq->subq[META_QUEUE_EARLY_ROUTE], node);
 
@@ -4185,8 +4208,9 @@ void rib_meta_queue_early_route_cleanup(const struct prefix *p, int route_type)
 			if (IS_ZEBRA_DEBUG_RIB_DETAILED) {
 				struct vrf *vrf = vrf_lookup_by_id(ere->re->vrf_id);
 
-				zlog_debug("Route %pFX(%s) type %d removed from early route queue",
-					   p, VRF_LOGNAME(vrf), route_type);
+				zlog_debug("Route %pFX(%s:%s) type %s(%d) removed from early route queue",
+					   p, VRF_LOGNAME(vrf), safi2str(ere->safi),
+					   zebra_route_string(route_type), route_type);
 			}
 
 			/* Free the early route memory */
@@ -4255,9 +4279,9 @@ void zebra_rib_route_entry_free(struct route_entry *re)
  *  0 -> Add
  *  1 -> update
  */
-int rib_add_multipath_nhe(afi_t afi, safi_t safi, struct prefix *p,
-			  struct prefix_ipv6 *src_p, struct route_entry *re,
-			  struct nhg_hash_entry *re_nhe, bool startup)
+int rib_add_multipath_nhe(afi_t afi, safi_t safi, struct prefix *p, struct prefix_ipv6 *src_p,
+			  struct route_entry *re, struct nhg_hash_entry *re_nhe, bool startup,
+			  bool replace)
 {
 	struct zebra_early_route *ere;
 
@@ -4276,6 +4300,7 @@ int rib_add_multipath_nhe(afi_t afi, safi_t safi, struct prefix *p,
 	ere->re = re;
 	ere->re_nhe = re_nhe;
 	ere->startup = startup;
+	ere->replace = replace;
 
 	return mq_add_handler(ere, rib_meta_queue_early_route_add);
 }
@@ -4283,9 +4308,8 @@ int rib_add_multipath_nhe(afi_t afi, safi_t safi, struct prefix *p,
 /*
  * Add a single route.
  */
-int rib_add_multipath(afi_t afi, safi_t safi, struct prefix *p,
-		      struct prefix_ipv6 *src_p, struct route_entry *re,
-		      struct nexthop_group *ng, bool startup)
+int rib_add_multipath(afi_t afi, safi_t safi, struct prefix *p, struct prefix_ipv6 *src_p,
+		      struct route_entry *re, struct nexthop_group *ng, bool startup, bool replace)
 {
 	int ret;
 	struct nhg_hash_entry nhe, *n;
@@ -4309,8 +4333,10 @@ int rib_add_multipath(afi_t afi, safi_t safi, struct prefix *p,
 
 		if (RIB_SYSTEM_ROUTE(re))
 			SET_FLAG(nhe.flags, NEXTHOP_GROUP_INITIAL_DELAY_INSTALL);
-	} else if (re->nhe_id > 0)
+	} else if (re->nhe_id > 0) {
 		nhe.id = re->nhe_id;
+		SET_FLAG(nhe.flags, NEXTHOP_GROUP_RECEIVED_FROM_EXTERNAL);
+	}
 
 	n = zebra_nhe_copy(&nhe, 0);
 
@@ -4357,7 +4383,7 @@ int rib_add_multipath(afi_t afi, safi_t safi, struct prefix *p,
 		}
 	}
 
-	ret = rib_add_multipath_nhe(afi, safi, p, src_p, re, n, startup);
+	ret = rib_add_multipath_nhe(afi, safi, p, src_p, re, n, startup, replace);
 
 	/* In error cases, free the route also */
 	if (ret < 0)
@@ -4401,11 +4427,10 @@ void rib_delete(afi_t afi, safi_t safi, vrf_id_t vrf_id, int type,
 }
 
 
-int rib_add(afi_t afi, safi_t safi, vrf_id_t vrf_id, int type,
-	    unsigned short instance, uint32_t flags, struct prefix *p,
-	    struct prefix_ipv6 *src_p, const struct nexthop *nh,
-	    uint32_t nhe_id, uint32_t table_id, uint32_t metric, uint32_t mtu,
-	    uint8_t distance, route_tag_t tag, bool startup)
+int rib_add(afi_t afi, safi_t safi, vrf_id_t vrf_id, int type, unsigned short instance,
+	    uint32_t flags, struct prefix *p, struct prefix_ipv6 *src_p, const struct nexthop *nh,
+	    uint32_t nhe_id, uint32_t table_id, uint32_t metric, uint32_t mtu, uint8_t distance,
+	    route_tag_t tag, bool startup, bool replace)
 {
 	struct route_entry *re = NULL;
 	struct nexthop nexthop = {};
@@ -4424,7 +4449,7 @@ int rib_add(afi_t afi, safi_t safi, vrf_id_t vrf_id, int type,
 		nexthop_group_add_sorted(&ng, &nexthop);
 	}
 
-	return rib_add_multipath(afi, safi, p, src_p, re, &ng, startup);
+	return rib_add_multipath(afi, safi, p, src_p, re, &ng, startup, replace);
 }
 
 static const char *rib_update_event2str(enum rib_update_event event)
@@ -4894,7 +4919,8 @@ static void rib_process_sys_route(struct zebra_dplane_ctx *ctx)
 			}
 		}
 
-		rib_add_multipath(afi, SAFI_UNICAST, (struct prefix *)prefix, NULL, re, ng, false);
+		rib_add_multipath(afi, SAFI_UNICAST, (struct prefix *)prefix, NULL, re, ng, false,
+				  dplane_ctx_route_get_replace(ctx));
 	} else if (op == DPLANE_OP_SYS_ROUTE_DELETE) {
 		rib_delete(afi, SAFI_UNICAST, vrf_id, proto, 0, flags, prefix, NULL, NULL, 0,
 			   table, 0, distance, false);
@@ -4910,6 +4936,7 @@ static void rib_process_dplane_results(struct event *event)
 	struct zebra_dplane_ctx *ctx;
 	struct dplane_ctx_list_head ctxlist;
 	bool shut_p = false;
+	uint32_t work_left_to_do = 0;
 
 #ifdef HAVE_SCRIPTING
 	char *script_name =
@@ -4929,12 +4956,15 @@ static void rib_process_dplane_results(struct event *event)
 	/* Dequeue a list of completed updates with one lock/unlock cycle */
 
 	do {
+		int limit = zebra_dplane_get_work_limit();
+
 		dplane_ctx_q_init(&ctxlist);
 
 		/* Take lock controlling queue of results */
 		frr_with_mutex (&dplane_mutex) {
 			/* Dequeue list of context structs */
-			dplane_ctx_list_append(&ctxlist, &rib_dplane_q);
+			work_left_to_do = dplane_ctx_list_append_count_max(&ctxlist, &rib_dplane_q,
+									   limit);
 		}
 
 		/* Dequeue context block */
@@ -5092,6 +5122,10 @@ static void rib_process_dplane_results(struct event *event)
 	if (fs)
 		frrscript_delete(fs);
 #endif
+
+	if (work_left_to_do)
+		event_add_event(zrouter.master, rib_process_dplane_results, NULL, 0,
+				&t_dplane);
 }
 
 /*
@@ -5103,8 +5137,14 @@ static int rib_dplane_results(struct dplane_ctx_list_head *ctxlist)
 {
 	/* Take lock controlling queue of results */
 	frr_with_mutex (&dplane_mutex) {
+		uint32_t q_count, q_high;
+
 		/* Enqueue context blocks */
 		dplane_ctx_list_append(&rib_dplane_q, ctxlist);
+		q_count = dplane_ctx_queue_count(&rib_dplane_q);
+		q_high = atomic_load_explicit(&rib_dplane_q_max, memory_order_relaxed);
+		if (q_count > q_high)
+			atomic_store_explicit(&rib_dplane_q_max, q_count, memory_order_relaxed);
 	}
 
 	/* Ensure event is signalled to zebra main pthread */
@@ -5123,6 +5163,11 @@ uint32_t zebra_rib_dplane_results_count(void)
 	}
 
 	return count;
+}
+
+uint32_t zebra_rib_dplane_results_max(void)
+{
+	return atomic_load_explicit(&rib_dplane_q_max, memory_order_relaxed);
 }
 
 /*
